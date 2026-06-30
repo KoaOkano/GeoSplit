@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geo-splitter"
+version = "0.1.0"
+description = "Split GeoJSON by feature count or file size and convert GeoJSON to and from GeoPackage"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Geo Splitter contributors" }]
+keywords = ["geojson", "geopackage", "gis", "splitter"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: GIS",
+]
+
+[project.optional-dependencies]
+gpkg = ["geopandas>=1.0"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+geo-splitter = "geo_splitter.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geo_splitter"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
