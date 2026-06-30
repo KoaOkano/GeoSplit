@@ -6,7 +6,7 @@ import argparse
 import sys
 
 from .convert import convert_file
-from .core import GeoSplitterError, parse_size, split_geojson
+from .core import GeoSplitError, parse_size, split_geojson
 
 
 def _parsers() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"Created {path}")
         return 0
-    except GeoSplitterError as error:
+    except GeoSplitError as error:
         parser.exit(2, f"error: {error}\n")
 
 

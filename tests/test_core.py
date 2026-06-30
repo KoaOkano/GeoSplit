@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from geo_splitter.core import GeoSplitterError, parse_size, split_geojson
+from geosplit.core import GeoSplitError, parse_size, split_geojson
 
 
 @pytest.fixture
@@ -45,11 +45,11 @@ def test_split_by_exact_size(collection: Path, tmp_path: Path) -> None:
 
 
 def test_rejects_oversized_feature(collection: Path, tmp_path: Path) -> None:
-    with pytest.raises(GeoSplitterError, match="Feature 1"):
+    with pytest.raises(GeoSplitError, match="Feature 1"):
         split_geojson(collection, tmp_path / "out", max_bytes=130)
 
 
 def test_does_not_overwrite_by_default(collection: Path, tmp_path: Path) -> None:
     split_geojson(collection, tmp_path / "out", features_per_file=5)
-    with pytest.raises(GeoSplitterError, match="already exists"):
+    with pytest.raises(GeoSplitError, match="already exists"):
         split_geojson(collection, tmp_path / "out", features_per_file=5)

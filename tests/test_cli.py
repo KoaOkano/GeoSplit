@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from geo_splitter.cli import help_text, main
+from geosplit.cli import help_text, main
 
 
 def test_split_command(tmp_path: Path, capsys) -> None:

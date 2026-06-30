@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .core import GeoSplitterError
+from .core import GeoSplitError
 
 _GEOJSON = {".geojson", ".json"}
 
@@ -22,28 +22,28 @@ def convert_file(
     source_suffix, destination_suffix = source.suffix.lower(), destination.suffix.lower()
     source_is_gpkg, destination_is_gpkg = source_suffix == ".gpkg", destination_suffix == ".gpkg"
     if source_is_gpkg == destination_is_gpkg or {source_suffix, destination_suffix} - (_GEOJSON | {".gpkg"}):
-        raise GeoSplitterError("Conversion requires one .geojson/.json file and one .gpkg file.")
+        raise GeoSplitError("Conversion requires one .geojson/.json file and one .gpkg file.")
     if not source.is_file():
-        raise GeoSplitterError(f"Input does not exist or is not a file: {source}")
+        raise GeoSplitError(f"Input does not exist or is not a file: {source}")
     if layer and not source_is_gpkg:
-        raise GeoSplitterError("--layer only applies when reading a GeoPackage.")
+        raise GeoSplitError("--layer only applies when reading a GeoPackage.")
     if output_layer and not destination_is_gpkg:
-        raise GeoSplitterError("--output-layer only applies when writing a GeoPackage.")
+        raise GeoSplitError("--output-layer only applies when writing a GeoPackage.")
     if destination.exists() and not force:
-        raise GeoSplitterError(f"Output already exists: {destination}. Use --force to replace it.")
+        raise GeoSplitError(f"Output already exists: {destination}. Use --force to replace it.")
     try:
         import geopandas as gpd
     except ImportError as error:
-        raise GeoSplitterError("GeoPackage support is not installed. Run: pip install 'geosplit[gpkg]'") from error
+        raise GeoSplitError("GeoPackage support is not installed. Run: pip install 'geosplit[gpkg]'") from error
 
     if source_is_gpkg:
         layers = gpd.list_layers(source)["name"].tolist()
         if not layers:
-            raise GeoSplitterError("GeoPackage contains no layers.")
+            raise GeoSplitError("GeoPackage contains no layers.")
         if layer is None and len(layers) != 1:
-            raise GeoSplitterError(f"GeoPackage has multiple layers; choose one with --layer: {', '.join(layers)}")
+            raise GeoSplitError(f"GeoPackage has multiple layers; choose one with --layer: {', '.join(layers)}")
         if layer is not None and layer not in layers:
-            raise GeoSplitterError(f"Layer {layer!r} not found. Available layers: {', '.join(layers)}")
+            raise GeoSplitError(f"Layer {layer!r} not found. Available layers: {', '.join(layers)}")
         frame, driver, kwargs = gpd.read_file(source, layer=layer or layers[0]), "GeoJSON", {}
     else:
         frame, driver, kwargs = gpd.read_file(source), "GPKG", {"layer": output_layer or destination.stem}

@@ -18,17 +18,19 @@ geosplit help convert
 
 ## Install
 
-Requires Python 3.10 or newer. Download or clone the project, open a terminal in its folder, then run:
+Requires Python 3.10 or newer. Install GeoSplit from PyPI:
 
 ```bash
-pip install .
+pip install geosplit
 ```
 
 Include conversion support:
 
 ```bash
-pip install ".[gpkg]"
+pip install "geosplit[gpkg]"
 ```
+
+If the `geosplit` command is not on your system path, use `python -m geosplit` instead.
 
 ## Split GeoJSON
 

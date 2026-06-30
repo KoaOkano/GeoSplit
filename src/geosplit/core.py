@@ -20,18 +20,18 @@ _UNITS = {
 }
 
 
-class GeoSplitterError(ValueError):
+class GeoSplitError(ValueError):
     """Raised when an input or requested operation is invalid."""
 
 
 def parse_size(value: str) -> int:
     """Convert values such as ``500KB`` or ``2.5MiB`` to bytes."""
     if not (match := _SIZE.fullmatch(value.strip())):
-        raise GeoSplitterError(f"Invalid size {value!r}; try 500KB, 2MB, or 1GiB.")
+        raise GeoSplitError(f"Invalid size {value!r}; try 500KB, 2MB, or 1GiB.")
     amount, unit = match.groups()
     size = int(float(amount) * _UNITS[unit.upper() if unit else "B"])
     if size < 1:
-        raise GeoSplitterError("Size must be at least 1 byte.")
+        raise GeoSplitError("Size must be at least 1 byte.")
     return size
 
 
@@ -43,13 +43,13 @@ def _load(path: Path) -> JsonObject:
     try:
         document = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError) as error:
-        raise GeoSplitterError(f"Cannot read {path}: {error}") from error
+        raise GeoSplitError(f"Cannot read {path}: {error}") from error
     except json.JSONDecodeError as error:
-        raise GeoSplitterError(f"Invalid JSON in {path}: {error}") from error
+        raise GeoSplitError(f"Invalid JSON in {path}: {error}") from error
     if not isinstance(document, dict) or document.get("type") != "FeatureCollection":
-        raise GeoSplitterError("Input must be a GeoJSON FeatureCollection.")
+        raise GeoSplitError("Input must be a GeoJSON FeatureCollection.")
     if not isinstance(document.get("features"), list):
-        raise GeoSplitterError("GeoJSON 'features' must be an array.")
+        raise GeoSplitError("GeoJSON 'features' must be an array.")
     return document
 
 
@@ -57,7 +57,7 @@ def _chunks_by_size(metadata: JsonObject, features: list[Any], limit: int) -> li
     # A trailing newline is included because output files contain one.
     fixed = len(_compact({**metadata, "features": []})) + 1
     if fixed > limit:
-        raise GeoSplitterError(f"The GeoJSON metadata alone exceeds the {limit}-byte limit.")
+        raise GeoSplitError(f"The GeoJSON metadata alone exceeds the {limit}-byte limit.")
 
     chunks: list[list[Any]] = [[]]
     used = fixed
@@ -65,7 +65,7 @@ def _chunks_by_size(metadata: JsonObject, features: list[Any], limit: int) -> li
         feature_size = len(_compact(feature))
         addition = feature_size + bool(chunks[-1])
         if fixed + feature_size > limit:
-            raise GeoSplitterError(f"Feature {index} cannot fit within the {limit}-byte limit.")
+            raise GeoSplitError(f"Feature {index} cannot fit within the {limit}-byte limit.")
         if used + addition > limit:
             chunks.append([])
             used = fixed
@@ -90,11 +90,11 @@ def split_geojson(
     Size limits include the complete compact GeoJSON document and final newline.
     """
     if (features_per_file is None) == (max_bytes is None):
-        raise GeoSplitterError("Choose exactly one split mode: feature count or file size.")
+        raise GeoSplitError("Choose exactly one split mode: feature count or file size.")
     if features_per_file is not None and features_per_file < 1:
-        raise GeoSplitterError("Features per file must be at least 1.")
+        raise GeoSplitError("Features per file must be at least 1.")
     if max_bytes is not None and max_bytes < 1:
-        raise GeoSplitterError("Maximum file size must be at least 1 byte.")
+        raise GeoSplitError("Maximum file size must be at least 1 byte.")
 
     source, output_dir = Path(source), Path(output_dir)
     document = _load(source)
@@ -109,7 +109,7 @@ def split_geojson(
     stem, width = prefix or source.stem, max(3, len(str(len(chunks))))
     paths = [output_dir / f"{stem}_{i:0{width}d}.geojson" for i in range(1, len(chunks) + 1)]
     if not force and (existing := next((path for path in paths if path.exists()), None)):
-        raise GeoSplitterError(f"Output already exists: {existing}. Use --force to replace it.")
+        raise GeoSplitError(f"Output already exists: {existing}. Use --force to replace it.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     for path, chunk in zip(paths, chunks, strict=True):
