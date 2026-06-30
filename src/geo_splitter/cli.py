@@ -1,4 +1,4 @@
-"""Command-line interface for geo-splitter."""
+"""Command-line interface for GeoSplit."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .core import GeoSplitterError, parse_size, split_geojson
 
 def _parsers() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
     parser = argparse.ArgumentParser(
-        prog="geo-splitter", description="Split GeoJSON and convert GeoJSON <-> GeoPackage."
+        prog="geosplit", description="Split GeoJSON and convert GeoJSON <-> GeoPackage."
     )
     commands = parser.add_subparsers(dest="command", required=True)
 

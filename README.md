@@ -1,4 +1,4 @@
-# Geo Splitter
+# GeoSplit
 
 A focused command-line tool that:
 
@@ -11,9 +11,9 @@ The splitter has no runtime dependencies. GeoPackage support is optional.
 View general or command-specific help at any time:
 
 ```bash
-geo-splitter help
-geo-splitter help split
-geo-splitter help convert
+geosplit help
+geosplit help split
+geosplit help convert
 ```
 
 ## Install
@@ -35,13 +35,13 @@ pip install ".[gpkg]"
 By feature count:
 
 ```bash
-geo-splitter split world.geojson output --features 1000
+geosplit split world.geojson output --features 1000
 ```
 
 By maximum file size:
 
 ```bash
-geo-splitter split world.geojson output --size 10MB
+geosplit split world.geojson output --size 10MB
 ```
 
 Sizes accept `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`. Each resulting file is a complete, compact GeoJSON document whose on-disk size does not exceed the requested limit. If one feature cannot fit by itself, the command stops with a clear error.
@@ -52,13 +52,13 @@ Use `--prefix countries` to customize output names or `--force` to replace match
 
 ```bash
 # GeoJSON to GeoPackage
-geo-splitter convert roads.geojson roads.gpkg
+geosplit convert roads.geojson roads.gpkg
 
 # Choose the new GeoPackage layer name
-geo-splitter convert roads.geojson map.gpkg --output-layer roads
+geosplit convert roads.geojson map.gpkg --output-layer roads
 
 # GeoPackage to GeoJSON
-geo-splitter convert map.gpkg roads.geojson --layer roads
+geosplit convert map.gpkg roads.geojson --layer roads
 ```
 
 If a GeoPackage contains exactly one layer, `--layer` is optional. Existing destinations are protected unless `--force` is supplied.

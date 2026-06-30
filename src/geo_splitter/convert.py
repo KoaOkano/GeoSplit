@@ -34,7 +34,7 @@ def convert_file(
     try:
         import geopandas as gpd
     except ImportError as error:
-        raise GeoSplitterError("GeoPackage support is not installed. Run: pip install 'geo-splitter[gpkg]'") from error
+        raise GeoSplitterError("GeoPackage support is not installed. Run: pip install 'geosplit[gpkg]'") from error
 
     if source_is_gpkg:
         layers = gpd.list_layers(source)["name"].tolist()
