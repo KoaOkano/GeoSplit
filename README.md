@@ -21,16 +21,22 @@ geosplit help convert
 Requires Python 3.10 or newer. Install GeoSplit from PyPI:
 
 ```bash
-pip install geosplit
+python -m pip install geosplit
 ```
 
 Include conversion support:
 
 ```bash
-pip install "geosplit[gpkg]"
+python -m pip install "geosplit[gpkg]"
 ```
 
-If the `geosplit` command is not on your system path, use `python -m geosplit` instead.
+Confirm the installation:
+
+```bash
+geosplit help
+```
+
+If the `geosplit` command is not on your system path, use `python -m geosplit help` and replace `geosplit` with `python -m geosplit` in the examples below.
 
 ## Split GeoJSON
 
@@ -48,7 +54,7 @@ geosplit split world.geojson output --size 10MB
 
 Sizes accept `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`. Each resulting file is a complete, compact GeoJSON document whose on-disk size does not exceed the requested limit. If one feature cannot fit by itself, the command stops with a clear error.
 
-Use `--prefix countries` to customize output names or `--force` to replace matching files. A source collection's top-level `bbox` is omitted because it would no longer describe each split collection; other top-level metadata is retained.
+Output files are numbered automatically, such as `world_001.geojson`, `world_002.geojson`, and so on. Use `--prefix countries` to customize their names or `--force` to replace matching files. A source collection's top-level `bbox` is omitted because it would no longer describe each split collection; other top-level metadata is retained.
 
 ## Convert formats
 
@@ -64,6 +70,12 @@ geosplit convert map.gpkg roads.geojson --layer roads
 ```
 
 If a GeoPackage contains exactly one layer, `--layer` is optional. Existing destinations are protected unless `--force` is supplied.
+
+## Update
+
+```bash
+python -m pip install --upgrade geosplit
+```
 
 ## License
 
