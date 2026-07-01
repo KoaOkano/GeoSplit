@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geosplit"
+version = "0.2.1"
+description = "Split GeoJSON by feature count or file size and convert GeoJSON to and from GeoPackage"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "GeoSplit contributors" }]
+keywords = ["geojson", "geopackage", "gis", "splitter"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: GIS",
+]
+dependencies = ["ijson>=3.5"]
+
+[project.urls]
+Source = "https://github.com/KoaOkano/GeoSplit"
+Issues = "https://github.com/KoaOkano/GeoSplit/issues"
+
+[project.optional-dependencies]
+gpkg = ["geopandas>=1.0"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+geosplit = "geosplit.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geosplit"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
