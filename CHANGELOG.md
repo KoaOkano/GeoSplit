@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 - 2026-07-04
+
+### Release
+
+- Add PyPI Trusted Publishing through GitHub Actions.
+- Verify tests, linting, package metadata, and the release tag before publishing.
+
 ## 0.4.0 - 2026-07-04
 
 ### Added

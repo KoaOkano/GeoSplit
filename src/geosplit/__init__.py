@@ -2,7 +2,7 @@
 
 from .core import GeoSplitError, SplitPlan, SplitResult, iter_batches, plan_split, split_geojson
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = [
     "GeoSplitError",
     "SplitPlan",

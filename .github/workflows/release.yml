@@ -1,0 +1,30 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/geosplit/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev,gpkg]" build twine
+      - run: pytest
+      - run: ruff check .
+      - name: Verify release tag
+        run: python -c "import geosplit, os; assert os.environ['GITHUB_REF_NAME'] == f'v{geosplit.__version__}'"
+      - run: python -m build
+      - run: twine check dist/*
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@release/v1
