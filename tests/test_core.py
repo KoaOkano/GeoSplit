@@ -1,10 +1,13 @@
 import json
+import errno
+import os
+import tracemalloc
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from geosplit.core import GeoSplitError, parse_size, split_geojson
+from geosplit.core import GeoSplitError, iter_batches, parse_size, plan_split, split_geojson
 
 
 @pytest.fixture
@@ -61,7 +64,7 @@ def test_force_removes_stale_parts(collection: Path, tmp_path: Path) -> None:
     output = tmp_path / "out"
     split_geojson(collection, output, features_per_file=2)
     paths = split_geojson(collection, output, features_per_file=3, force=True)
-    assert list(output.glob("*.geojson")) == paths
+    assert list(output.glob("*.geojson")) == list(paths)
 
 
 def test_force_preserves_unmanaged_matching_files(collection: Path, tmp_path: Path) -> None:
@@ -136,7 +139,7 @@ def test_rejects_input_matching_managed_output(tmp_path: Path) -> None:
 def test_wraps_output_errors(collection: Path, tmp_path: Path) -> None:
     output = tmp_path / "not-a-directory"
     output.write_text("file", encoding="utf-8")
-    with pytest.raises(GeoSplitError, match="Cannot write"):
+    with pytest.raises(GeoSplitError, match="not a directory"):
         split_geojson(collection, output, features_per_file=1)
 
 
@@ -178,7 +181,7 @@ def test_splits_large_file(tmp_path: Path) -> None:
     source = tmp_path / "large.geojson"
     with source.open("w", encoding="utf-8") as stream:
         stream.write('{"type":"FeatureCollection","features":[')
-        for index in range(20_000):
+        for index in range(50_000):
             if index:
                 stream.write(",")
             stream.write(
@@ -187,6 +190,169 @@ def test_splits_large_file(tmp_path: Path) -> None:
             )
         stream.write("]}")
 
-    paths = split_geojson(source, tmp_path / "out", features_per_file=1_000)
-    assert len(paths) == 20
-    assert sum(len(json.loads(path.read_text(encoding="utf-8"))["features"]) for path in paths) == 20_000
+    tracemalloc.start()
+    result = split_geojson(source, tmp_path / "out", features_per_file=1_000)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert len(result) == 50
+    assert result.feature_count == 50_000
+    assert peak < 20_000_000
+
+
+def test_plan_split_does_not_write(collection: Path, tmp_path: Path) -> None:
+    output = tmp_path / "missing"
+    plan = plan_split(collection, output, features_per_file=2)
+    assert not output.exists()
+    assert [item.feature_count for item in plan.files] == [2, 2, 1]
+    assert plan.feature_count == 5
+    assert plan.total_bytes == sum(item.size for item in plan.files)
+
+
+def test_default_output_directory(collection: Path) -> None:
+    result = split_geojson(collection, features_per_file=5)
+    assert result.files[0].parent == collection.with_name("places_split")
+    assert result.feature_count == 5
+    assert result.total_bytes == result.files[0].stat().st_size
+
+
+def test_iter_batches_and_early_cleanup(collection: Path) -> None:
+    batches = iter_batches(collection, features=2)
+    assert len(next(batches)["features"]) == 2
+    batches.close()
+    renamed = collection.with_name("renamed.geojson")
+    collection.rename(renamed)
+    assert renamed.exists()
+
+
+@pytest.mark.parametrize(
+    "geometry",
+    [
+        {"type": "Point", "coordinates": [1, 2]},
+        {"type": "MultiPoint", "coordinates": [[1, 2], [3, 4]]},
+        {"type": "LineString", "coordinates": [[1, 2], [3, 4]]},
+        {"type": "MultiLineString", "coordinates": [[[1, 2], [3, 4]]]},
+        {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
+        {"type": "MultiPolygon", "coordinates": [[[[0, 0], [1, 0], [1, 1], [0, 0]]]]},
+        {"type": "GeometryCollection", "geometries": [{"type": "Point", "coordinates": [1, 2]}]},
+    ],
+)
+def test_accepts_every_geometry_type(geometry: object, tmp_path: Path) -> None:
+    source = tmp_path / "geometry.geojson"
+    source.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [{"type": "Feature", "properties": {}, "geometry": geometry}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert split_geojson(source, tmp_path / "out", features_per_file=1)
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [
+        ["longitude", 35],
+        [139],
+        [[139, 35]],
+        [True, 35],
+    ],
+)
+def test_rejects_invalid_point_coordinates(coordinates: object, tmp_path: Path) -> None:
+    source = tmp_path / "invalid-coordinate.geojson"
+    source.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {},
+                        "geometry": {"type": "Point", "coordinates": coordinates},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(GeoSplitError, match="coordinates"):
+        split_geojson(source, tmp_path / "out", features_per_file=1)
+
+
+def test_rejects_excessive_nesting(tmp_path: Path) -> None:
+    source = tmp_path / "deep.geojson"
+    nested = "[" * 101 + "0" + "]" * 101
+    source.write_text(f'{{"type":"FeatureCollection","metadata":{nested},"features":[]}}', encoding="utf-8")
+    with pytest.raises(GeoSplitError, match="nesting"):
+        split_geojson(source, tmp_path / "out", features_per_file=1)
+
+
+def test_recovers_interrupted_transaction(collection: Path, tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    result = split_geojson(collection, output_dir, features_per_file=5)
+    output = result.files[0]
+    manifest = output_dir / ".places.geosplit.json"
+    original = output.read_bytes()
+    tx = output_dir / ".places.geosplit-transaction"
+    backups = tx / "backups"
+    backups.mkdir(parents=True)
+    (tx / "journal.json").write_text(
+        json.dumps(
+            {
+                "status": "prepared",
+                "existing": [output.name, manifest.name],
+                "targets": [output.name, manifest.name],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output.replace(backups / output.name)
+    manifest.replace(backups / manifest.name)
+    output.write_text("partial", encoding="utf-8")
+
+    with pytest.raises(GeoSplitError, match="already exists"):
+        split_geojson(collection, output_dir, features_per_file=5)
+    assert output.read_bytes() == original
+    assert manifest.exists()
+    assert not tx.exists()
+
+
+def test_adopts_pre_manifest_outputs(collection: Path, tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    first = split_geojson(collection, output, features_per_file=2)
+    (output / ".places.geosplit.json").unlink()
+    result = split_geojson(collection, output, features_per_file=3, force=True)
+    assert len(first) == 3
+    assert len(result) == 2
+    assert sorted(output.glob("*.geojson")) == list(result)
+    assert (output / ".places.geosplit.json").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-specific locked-file behavior")
+def test_reports_locked_windows_output(collection: Path, tmp_path: Path, monkeypatch) -> None:
+    output_dir = tmp_path / "out"
+    output = split_geojson(collection, output_dir, features_per_file=5).files[0]
+    original_replace = Path.replace
+
+    def locked(path: Path, target: Path):
+        if path == output:
+            raise PermissionError(13, "file is locked", str(path))
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", locked)
+    with pytest.raises(GeoSplitError, match="locked"):
+        split_geojson(collection, output_dir, features_per_file=5, force=True)
+
+
+def test_reports_full_disk(collection: Path, tmp_path: Path, monkeypatch) -> None:
+    original_write = Path.write_bytes
+
+    def full(path: Path, data: bytes):
+        if path.parent.name == "new":
+            raise OSError(errno.ENOSPC, "disk full")
+        return original_write(path, data)
+
+    monkeypatch.setattr(Path, "write_bytes", full)
+    with pytest.raises(GeoSplitError, match="Disk is full"):
+        split_geojson(collection, tmp_path / "out", features_per_file=5)

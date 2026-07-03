@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "geosplit"
-version = "0.3.1"
+dynamic = ["version"]
 description = "Split GeoJSON by feature count or file size and convert GeoJSON to and from GeoPackage"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,6 +32,9 @@ geosplit = "geosplit.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/geosplit"]
+
+[tool.hatch.version]
+path = "src/geosplit/__init__.py"
 
 [tool.pytest.ini_options]
 addopts = "-q"

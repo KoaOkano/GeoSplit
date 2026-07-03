@@ -46,15 +46,54 @@ By feature count:
 geosplit split world.geojson output --features 1000
 ```
 
+Omit the output directory to create `world_split` . Specifying Output directory is optional:
+
+```bash
+geosplit split world.geojson --features 1000
+```
+
 By maximum file size:
 
 ```bash
 geosplit split world.geojson output --size 10MB
 ```
 
+Preview every output file, feature count, size, warning, and conflict without writing anything:
+
+```bash
+geosplit split world.geojson output --features 1000 --dry-run
+```
+
 Sizes accept `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`. Each resulting file is a complete, compact GeoJSON document whose on-disk size does not exceed the requested limit. If one feature cannot fit by itself, the command stops with a clear error.
 
-Output files are numbered automatically, such as `world_001.geojson`, `world_002.geojson`, and so on. Use `--prefix countries` to customize their names or `--force` to replace files recorded in GeoSplit's hidden output manifest. A source collection's top-level `bbox` is omitted because it would no longer describe each split collection; other top-level metadata is retained.
+Output files are numbered automatically, such as `world_001.geojson`, `world_002.geojson`, and so on. Use `--prefix countries` to customize their names or `--force` to replace files recorded in GeoSplit's hidden output manifest. Progress is written to stderr; use `--quiet` to suppress it. Interrupted transactions are recovered on the next run. A source collection's top-level `bbox` is omitted because it would no longer describe each split collection; other top-level metadata is retained.
+
+## Python API
+
+Stream validated collections without writing files:
+
+```python
+from geosplit import iter_batches
+
+for collection in iter_batches("world.geojson", features=1000):
+    process(collection)
+```
+
+Plan a split, or inspect the result of a completed split:
+
+```python
+from geosplit import plan_split, split_geojson
+
+plan = plan_split("world.geojson", features_per_file=1000)
+result = split_geojson("world.geojson", features_per_file=1000)
+
+print(plan.files)
+print(result.files)
+print(result.feature_count)
+print(result.total_bytes)
+```
+
+Show the installed version with `geosplit --version`.
 
 ## Convert formats
 
