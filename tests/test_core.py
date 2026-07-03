@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,23 @@ def test_force_removes_stale_parts(collection: Path, tmp_path: Path) -> None:
     split_geojson(collection, output, features_per_file=2)
     paths = split_geojson(collection, output, features_per_file=3, force=True)
     assert list(output.glob("*.geojson")) == paths
+
+
+def test_force_preserves_unmanaged_matching_files(collection: Path, tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    split_geojson(collection, output, features_per_file=2, prefix="places")
+    unmanaged = output / "places_999.geojson"
+    unmanaged.write_text("not created by GeoSplit", encoding="utf-8")
+    split_geojson(collection, output, features_per_file=3, prefix="places", force=True)
+    assert unmanaged.read_text(encoding="utf-8") == "not created by GeoSplit"
+
+
+def test_force_rejects_corrupt_manifest(collection: Path, tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".places.geosplit.json").write_text('{"files":["../outside.geojson"]}', encoding="utf-8")
+    with pytest.raises(GeoSplitError, match="manifest"):
+        split_geojson(collection, output, features_per_file=2, force=True)
 
 
 def test_rejects_prefix_paths(collection: Path, tmp_path: Path) -> None:
@@ -126,3 +144,49 @@ def test_accepts_utf8_bom(tmp_path: Path) -> None:
     source = tmp_path / "bom.geojson"
     source.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8-sig")
     assert split_geojson(source, tmp_path / "out", features_per_file=1)
+
+
+def test_preserves_coordinate_precision(tmp_path: Path) -> None:
+    coordinate = "139.12345678901234567890123456789"
+    source = tmp_path / "precision.geojson"
+    source.write_text(
+        '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},'
+        f'"geometry":{{"type":"Point","coordinates":[{coordinate},35.0]}}}}]}}',
+        encoding="utf-8",
+    )
+    [output] = split_geojson(source, tmp_path / "out", features_per_file=1)
+    document = json.loads(output.read_text(encoding="utf-8"), parse_float=Decimal)
+    assert document["features"][0]["geometry"]["coordinates"][0] == Decimal(coordinate)
+
+
+def test_handles_unicode_paths(tmp_path: Path) -> None:
+    source = tmp_path / "日本の地点.geojson"
+    source.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+    [output] = split_geojson(source, tmp_path / "出力", features_per_file=1)
+    assert output.name == "日本の地点_001.geojson"
+
+
+@pytest.mark.parametrize("content", ["{", '{"type":"FeatureCollection","features":[]} trailing'])
+def test_rejects_corrupt_files(content: str, tmp_path: Path) -> None:
+    source = tmp_path / "corrupt.geojson"
+    source.write_text(content, encoding="utf-8")
+    with pytest.raises(GeoSplitError, match="GeoJSON|valid"):
+        split_geojson(source, tmp_path / "out", features_per_file=1)
+
+
+def test_splits_large_file(tmp_path: Path) -> None:
+    source = tmp_path / "large.geojson"
+    with source.open("w", encoding="utf-8") as stream:
+        stream.write('{"type":"FeatureCollection","features":[')
+        for index in range(20_000):
+            if index:
+                stream.write(",")
+            stream.write(
+                f'{{"type":"Feature","properties":{{"id":{index}}},'
+                f'"geometry":{{"type":"Point","coordinates":[{index},{index}]}}}}'
+            )
+        stream.write("]}")
+
+    paths = split_geojson(source, tmp_path / "out", features_per_file=1_000)
+    assert len(paths) == 20
+    assert sum(len(json.loads(path.read_text(encoding="utf-8"))["features"]) for path in paths) == 20_000

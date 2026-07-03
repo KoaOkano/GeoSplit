@@ -6,7 +6,7 @@ A focused command-line tool that:
 - splits it by a strict maximum file size; and
 - converts GeoJSON to GeoPackage, or a GeoPackage layer back to GeoJSON.
 
-The splitter uses a lightweight streaming parser, so memory use is bounded by the current output chunk. GeoPackage support is optional.
+The splitter uses a lightweight streaming parser, preserves coordinate precision, and bounds memory use to the current output chunk. GeoPackage support is optional.
 
 View general or command-specific help at any time:
 
@@ -54,7 +54,7 @@ geosplit split world.geojson output --size 10MB
 
 Sizes accept `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`. Each resulting file is a complete, compact GeoJSON document whose on-disk size does not exceed the requested limit. If one feature cannot fit by itself, the command stops with a clear error.
 
-Output files are numbered automatically, such as `world_001.geojson`, `world_002.geojson`, and so on. Use `--prefix countries` to customize their names or `--force` to replace matching files. A source collection's top-level `bbox` is omitted because it would no longer describe each split collection; other top-level metadata is retained.
+Output files are numbered automatically, such as `world_001.geojson`, `world_002.geojson`, and so on. Use `--prefix countries` to customize their names or `--force` to replace files recorded in GeoSplit's hidden output manifest. A source collection's top-level `bbox` is omitted because it would no longer describe each split collection; other top-level metadata is retained.
 
 ## Convert formats
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from codecs import BOM_UTF8
 from collections.abc import Iterable, Iterator
@@ -12,6 +11,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 import ijson
+import simplejson as json
 
 JsonObject = dict[str, Any]
 _SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*(B|KB|KIB|MB|MIB|GB|GIB)?$", re.I)
@@ -61,7 +61,7 @@ def _metadata(path: Path) -> JsonObject:
     has_features = False
     try:
         with _open(path) as source:
-            events = iter(ijson.parse(source, use_float=True))
+            events = iter(ijson.parse(source))
             if next(events)[1] != "start_map":
                 raise GeoSplitError("Input must be a GeoJSON FeatureCollection.")
             for _, event, key in events:
@@ -90,6 +90,8 @@ def _metadata(path: Path) -> JsonObject:
                     depth += event in {"start_map", "start_array"}
                     depth -= event in {"end_map", "end_array"}
                 metadata[key] = builder.value
+            if next(events, None) is not None:
+                raise GeoSplitError("Input contains data after the GeoJSON object.")
     except GeoSplitError:
         raise
     except (OSError, UnicodeError, ijson.JSONError, StopIteration) as error:
@@ -116,7 +118,7 @@ def _validate_geometry(geometry: Any, index: int, allow_null: bool = True) -> No
 def _features(path: Path) -> Iterator[Any]:
     try:
         with _open(path) as source:
-            for index, feature in enumerate(ijson.items(source, "features.item", use_float=True), 1):
+            for index, feature in enumerate(ijson.items(source, "features.item"), 1):
                 if (
                     not isinstance(feature, dict)
                     or feature.get("type") != "Feature"
@@ -170,25 +172,43 @@ def _safe_stem(source: Path, prefix: str | None) -> str:
     return stem
 
 
+def _previous_outputs(output_dir: Path, stem: str) -> tuple[Path, list[Path]]:
+    manifest = output_dir / f".{stem}.geosplit.json"
+    if not manifest.exists():
+        return manifest, []
+    try:
+        names = json.loads(manifest.read_text(encoding="utf-8"))["files"]
+        pattern = re.compile(rf"{re.escape(stem)}_\d+\.geojson")
+        if not isinstance(names, list) or not all(isinstance(name, str) and pattern.fullmatch(name) for name in names):
+            raise ValueError("invalid file list")
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise GeoSplitError(f"Invalid GeoSplit manifest: {manifest}") from error
+    return manifest, [output_dir / name for name in names]
+
+
 def _commit(source: Path, output_dir: Path, stem: str, temporary: Path, count: int, force: bool) -> list[Path]:
     width = max(3, len(str(count)))
     paths = [output_dir / f"{stem}_{index:0{width}d}.geojson" for index in range(1, count + 1)]
-    pattern = re.compile(rf"{re.escape(stem)}_\d+\.geojson")
-    managed = sorted(path for path in output_dir.iterdir() if path.is_file() and pattern.fullmatch(path.name))
-    if source.resolve() in {path.resolve() for path in paths + managed}:
+    manifest, previous = _previous_outputs(output_dir, stem)
+    existing = sorted({path for path in paths + previous if path.exists()})
+    if source.resolve() in {path.resolve() for path in paths + previous}:
         raise GeoSplitError("Splitting would overwrite or remove the input.")
-    if not force and (existing := next(iter(managed), None)):
-        raise GeoSplitError(f"Output already exists: {existing}. Use --force to replace it.")
+    if not force and (conflict := manifest if manifest.exists() else next(iter(existing), None)):
+        raise GeoSplitError(f"Output already exists: {conflict}. Use --force to replace it.")
 
     backups = temporary / "backups"
     installed: list[Path] = []
     try:
+        (temporary / "manifest").write_bytes(_compact({"files": [path.name for path in paths]}) + b"\n")
         backups.mkdir()
+        managed = [*existing, manifest] if manifest.exists() else existing
         for path in managed if force else []:
             path.replace(backups / path.name)
         for index, path in enumerate(paths, 1):
             (temporary / str(index)).replace(path)
             installed.append(path)
+        (temporary / "manifest").replace(manifest)
+        installed.append(manifest)
     except OSError as error:
         for path in installed:
             path.unlink(missing_ok=True)
