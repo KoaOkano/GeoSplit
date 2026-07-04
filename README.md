@@ -1,72 +1,118 @@
 # GeoSplit
 
-A focused command-line tool that:
+GeoSplit safely splits a GeoJSON `FeatureCollection` by feature count or exact file size. It can also convert GeoJSON to and from GeoPackage.
 
-- splits a GeoJSON `FeatureCollection` by feature count;
-- splits it by a strict maximum file size; and
-- converts GeoJSON to GeoPackage, or a GeoPackage layer back to GeoJSON.
-
-The splitter uses a lightweight streaming parser, preserves coordinate precision, and bounds memory use to the current output chunk. GeoPackage support is optional.
-
-View general or command-specific help at any time:
-
-```bash
-geosplit help
-geosplit help split
-geosplit help convert
-```
+The splitter streams large inputs, preserves coordinate precision, limits memory to the active output chunk, checks available disk space, and uses recoverable output transactions.
 
 ## Install
 
-Requires Python 3.10 or newer. Install GeoSplit from PyPI:
+GeoSplit requires Python 3.10 or newer:
 
 ```bash
 python -m pip install geosplit
 ```
 
-Include conversion support:
+On Windows, `py` can be used instead:
+
+```powershell
+py -m pip install geosplit
+```
+
+Install optional GeoPackage support:
 
 ```bash
 python -m pip install "geosplit[gpkg]"
 ```
 
-Confirm the installation:
+Check the installation:
 
 ```bash
-geosplit help
+geosplit --version
+geosplit --help
+geosplit help split
 ```
 
-If the `geosplit` command is not on your system path, use `python -m geosplit help` and replace `geosplit` with `python -m geosplit` in the examples below.
+If `geosplit` is not on your PATH, replace it with `python -m geosplit` or, on Windows, `py -m geosplit`.
 
 ## Split GeoJSON
 
-By feature count:
-
-```bash
-geosplit split world.geojson output --features 1000
-```
-
-Omit the output directory to create `world_split` . Specifying Output directory is optional:
+Split every 1,000 features:
 
 ```bash
 geosplit split world.geojson --features 1000
 ```
 
-By maximum file size:
+The output directory is optional. When omitted, GeoSplit creates `world_split` beside the input. To choose it explicitly:
+
+```bash
+geosplit split world.geojson output --features 1000
+```
+
+Split using an exact maximum output size:
 
 ```bash
 geosplit split world.geojson output --size 10MB
 ```
 
-Preview every output file, feature count, size, warning, and conflict without writing anything:
+Sizes accept `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`. Every output is a complete compact GeoJSON document. A feature that cannot fit by itself produces an error.
+
+### Preview with dry-run
+
+Show planned files, feature counts, sizes, warnings, and conflicts without creating anything:
 
 ```bash
-geosplit split world.geojson output --features 1000 --dry-run
+geosplit split world.geojson --features 1000 --dry-run
 ```
 
-Sizes accept `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`. Each resulting file is a complete, compact GeoJSON document whose on-disk size does not exceed the requested limit. If one feature cannot fit by itself, the command stops with a clear error.
+Dry-run still reads and validates the complete input.
 
-Output files are numbered automatically, such as `world_001.geojson`, `world_002.geojson`, and so on. Use `--prefix countries` to customize their names or `--force` to replace files recorded in GeoSplit's hidden output manifest. Progress is written to stderr; use `--quiet` to suppress it. Interrupted transactions are recovered on the next run. A source collection's top-level `bbox` is omitted because it would no longer describe each split collection; other top-level metadata is retained.
+### Other split options
+
+Choose the output filename prefix:
+
+```bash
+geosplit split world.geojson --features 1000 --prefix countries
+```
+
+Replace output files previously managed by GeoSplit:
+
+```bash
+geosplit split world.geojson --features 1000 --force
+```
+
+Suppress progress and success output for scripts:
+
+```bash
+geosplit split world.geojson --features 1000 --quiet
+```
+
+Options can be combined:
+
+```bash
+geosplit split world.geojson output --size 50MiB --prefix region --force --quiet
+```
+
+Output files are numbered automatically, for example `world_001.geojson`. GeoSplit preserves top-level metadata except `bbox`, which would no longer describe each split collection. Interrupted transactions are recovered on the next run.
+
+## Convert GeoJSON and GeoPackage
+
+Install `geosplit[gpkg]` first, then run:
+
+```bash
+# GeoJSON to GeoPackage
+geosplit convert roads.geojson roads.gpkg
+
+# Select the new GeoPackage layer name
+geosplit convert roads.geojson map.gpkg --output-layer roads
+
+# GeoPackage to GeoJSON
+geosplit convert map.gpkg roads.geojson --layer roads
+
+# Replace an existing destination
+geosplit convert roads.geojson roads.gpkg --force
+```
+
+If a GeoPackage contains exactly one layer, `--layer` is optional.
 
 ## Python API
 
@@ -79,7 +125,7 @@ for collection in iter_batches("world.geojson", features=1000):
     process(collection)
 ```
 
-Plan a split, or inspect the result of a completed split:
+Plan without writing, then perform a split:
 
 ```python
 from geosplit import plan_split, split_geojson
@@ -93,28 +139,26 @@ print(result.feature_count)
 print(result.total_bytes)
 ```
 
-Show the installed version with `geosplit --version`.
+Use `max_bytes` instead of `features_per_file` for exact-size splitting.
 
-## Convert formats
+## Safety behavior
 
-```bash
-# GeoJSON to GeoPackage
-geosplit convert roads.geojson roads.gpkg
-
-# Choose the new GeoPackage layer name
-geosplit convert roads.geojson map.gpkg --output-layer roads
-
-# GeoPackage to GeoJSON
-geosplit convert map.gpkg roads.geojson --layer roads
-```
-
-If a GeoPackage contains exactly one layer, `--layer` is optional. Existing destinations are protected unless `--force` is supplied.
+- Existing output is protected unless `--force` is supplied.
+- `--force` only replaces files tracked by GeoSplit or recognized legacy output.
+- Output is staged before replacing existing files.
+- Coordinate values retain their parsed decimal precision.
+- Invalid geometry structure, non-finite coordinates, corrupt JSON, and excessive nesting are rejected.
+- A disk-space estimate is checked before staging; operating-system write errors are still handled if free space changes later.
 
 ## Update
 
 ```bash
 python -m pip install --upgrade geosplit
 ```
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 

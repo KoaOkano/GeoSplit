@@ -4,6 +4,7 @@ import os
 import tracemalloc
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -106,9 +107,7 @@ def test_rejects_invalid_features(feature: object, tmp_path: Path) -> None:
 
 def test_preserves_metadata_after_features(tmp_path: Path) -> None:
     source = tmp_path / "ordered.geojson"
-    source.write_text(
-        '{"type":"FeatureCollection","features":[],"name":"after","bbox":[0,0,1,1]}', encoding="utf-8"
-    )
+    source.write_text('{"type":"FeatureCollection","features":[],"name":"after","bbox":[0,0,1,1]}', encoding="utf-8")
     [output] = split_geojson(source, tmp_path / "out", features_per_file=1)
     result = json.loads(output.read_text())
     assert result["name"] == "after"
@@ -251,6 +250,32 @@ def test_accepts_every_geometry_type(geometry: object, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "geometry",
+    [
+        {"type": "Point", "coordinates": []},
+        {"type": "MultiPoint", "coordinates": []},
+        {"type": "LineString", "coordinates": []},
+        {"type": "MultiLineString", "coordinates": []},
+        {"type": "Polygon", "coordinates": []},
+        {"type": "MultiPolygon", "coordinates": []},
+        {"type": "GeometryCollection", "geometries": []},
+    ],
+)
+def test_accepts_empty_geometries(geometry: object, tmp_path: Path) -> None:
+    source = tmp_path / "empty-geometry.geojson"
+    source.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [{"type": "Feature", "properties": {}, "geometry": geometry}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert split_geojson(source, tmp_path / "out", features_per_file=1)
+
+
+@pytest.mark.parametrize(
     "coordinates",
     [
         ["longitude", 35],
@@ -356,3 +381,27 @@ def test_reports_full_disk(collection: Path, tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setattr(Path, "write_bytes", full)
     with pytest.raises(GeoSplitError, match="Disk is full"):
         split_geojson(collection, tmp_path / "out", features_per_file=5)
+
+
+def test_disk_preflight_fails_before_writing(collection: Path, tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "out"
+    monkeypatch.setattr("geosplit.core.shutil.disk_usage", lambda path: SimpleNamespace(free=0))
+    with pytest.raises(GeoSplitError, match="Insufficient disk space"):
+        split_geojson(collection, output, features_per_file=5)
+    assert not output.exists()
+
+
+def test_normal_split_opens_input_twice(collection: Path, tmp_path: Path, monkeypatch) -> None:
+    from geosplit import core
+
+    original = core._open
+    opened = 0
+
+    def counted(path: Path):
+        nonlocal opened
+        opened += 1
+        return original(path)
+
+    monkeypatch.setattr(core, "_open", counted)
+    split_geojson(collection, tmp_path / "out", features_per_file=2)
+    assert opened == 2

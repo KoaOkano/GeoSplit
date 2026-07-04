@@ -8,5 +8,8 @@ venv/
 build/
 dist/
 .test-output*/
+.pytest-local/
+.wheel-test/
+.sdist-test/
 *.gpkg-shm
 *.gpkg-wal

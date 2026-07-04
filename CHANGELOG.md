@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.2 - 2026-07-04
+
+### Performance
+
+- Reduce normal splitting from four input parsing passes to two.
+- Combine output planning and transaction staging without increasing chunk memory.
+
+### Reliability
+
+- Check estimated temporary disk requirements before writing.
+- Handle empty GeoJSON geometry objects consistently.
+- Detect input changes before committing staged output.
+
+### Release
+
+- Separate package building and PyPI publishing into least-privilege jobs.
+- Publish the exact wheel and source distribution tested by the build job.
+- Pin GitHub Actions to commit hashes and enable package attestations.
+- Add security and contribution policies.
+
+### Documentation
+
+- Expand CLI examples for optional output directories, dry-run, quiet mode, prefixes, force, conversion, and Windows.
+- Added Security.md and Contributing.md
+
 ## 0.4.1 - 2026-07-04
 
 ### Release

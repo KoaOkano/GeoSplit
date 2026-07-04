@@ -187,8 +187,10 @@ def _validate_geometry(geometry: Any, index: int, allow_null: bool = True) -> No
         "LineString": lambda: _line(coordinates),
         "MultiLineString": lambda: isinstance(coordinates, list) and all(_line(item) for item in coordinates),
         "Polygon": lambda: isinstance(coordinates, list) and all(_ring(item) for item in coordinates),
-        "MultiPolygon": lambda: isinstance(coordinates, list)
-        and all(isinstance(polygon, list) and all(_ring(ring) for ring in polygon) for polygon in coordinates),
+        "MultiPolygon": lambda: (
+            isinstance(coordinates, list)
+            and all(isinstance(polygon, list) and all(_ring(ring) for ring in polygon) for polygon in coordinates)
+        ),
     }
     if geometry_type == "GeometryCollection":
         geometries = geometry.get("geometries")
@@ -196,6 +198,8 @@ def _validate_geometry(geometry: Any, index: int, allow_null: bool = True) -> No
             raise GeoSplitError(f"Feature {index} has invalid geometry.")
         for child in geometries:
             _validate_geometry(child, index, allow_null=False)
+    elif geometry_type in valid and coordinates == []:
+        return
     elif geometry_type not in valid or not valid[geometry_type]():
         raise GeoSplitError(f"Feature {index} has invalid geometry or non-numeric coordinates.")
 
@@ -259,14 +263,12 @@ def _validate_mode(features: int | None, max_bytes: int | None) -> None:
         raise GeoSplitError("Maximum file size must be at least 1 byte.")
 
 
-def iter_batches(
-    source: str | Path, *, features: int | None = None, max_bytes: int | None = None
+def _collections(
+    metadata: JsonObject,
+    feature_stream: Iterator[Any],
+    features: int | None,
+    max_bytes: int | None,
 ) -> Iterator[JsonObject]:
-    """Yield validated FeatureCollections without writing files."""
-    _validate_mode(features, max_bytes)
-    path = Path(source)
-    metadata = _metadata(path)
-    feature_stream = _features(path)
     chunks = (
         _chunks_by_count(feature_stream, features)
         if features is not None
@@ -280,7 +282,29 @@ def iter_batches(
         if not yielded:
             yield {**metadata, "features": []}
     finally:
+        chunks.close()  # type: ignore[attr-defined]
         feature_stream.close()
+
+
+def iter_batches(
+    source: str | Path, *, features: int | None = None, max_bytes: int | None = None
+) -> Iterator[JsonObject]:
+    """Yield validated FeatureCollections without writing files."""
+    _validate_mode(features, max_bytes)
+    path = Path(source)
+    yield from _collections(_metadata(path), _features(path), features, max_bytes)
+
+
+def _disk_preflight(source: Path, destination: Path) -> None:
+    required = max(source.stat().st_size * 5 // 4, 1_048_576)
+    volume = destination
+    while not volume.exists() and volume != volume.parent:
+        volume = volume.parent
+    available = shutil.disk_usage(volume).free
+    if available < required:
+        raise GeoSplitError(
+            f"Insufficient disk space. Required: approximately {required:,} bytes; available: {available:,} bytes."
+        )
 
 
 def _safe_stem(source: Path, prefix: str | None) -> str:
@@ -381,6 +405,48 @@ def _recover_transaction(output_dir: Path, stem: str) -> None:
         raise GeoSplitError(f"Cannot safely recover interrupted transaction: {tx}") from error
 
 
+def _make_plan(
+    source: Path,
+    destination: Path,
+    stem: str,
+    summaries: list[tuple[int, int]],
+    *,
+    check_transaction: bool = True,
+) -> SplitPlan:
+    width = max(3, len(str(len(summaries))))
+    files = tuple(
+        PlannedFile(destination / f"{stem}_{index:0{width}d}.geojson", count, size)
+        for index, (count, size) in enumerate(summaries, 1)
+    )
+    try:
+        manifest, previous, legacy = _previous_outputs(destination, stem)
+    except OSError as error:
+        raise _operation_error("inspect output directory", destination, error) from error
+    paths = [item.path for item in files]
+    if source.resolve() in {path.resolve() for path in paths + previous}:
+        raise GeoSplitError("Splitting would overwrite or remove the input.")
+    conflicts = sorted({path for path in paths + previous if path.exists()})
+    if manifest.exists():
+        conflicts.append(manifest)
+    warnings = []
+    if legacy:
+        warnings.append("Pre-manifest GeoSplit outputs were detected and will be adopted with --force.")
+    stale = {path for path in previous if path.exists()} - set(paths)
+    if stale:
+        warnings.append(f"{len(stale)} stale output file(s) will be removed with --force.")
+    if check_transaction and _transaction_path(destination, stem).exists():
+        warnings.append("An interrupted transaction was detected; a real split will recover it first.")
+    return SplitPlan(
+        source,
+        destination,
+        files,
+        sum(item.feature_count for item in files),
+        sum(item.size for item in files),
+        tuple(conflicts),
+        tuple(warnings),
+    )
+
+
 def plan_split(
     source: str | Path,
     output_dir: str | Path | None = None,
@@ -399,38 +465,7 @@ def plan_split(
     summaries: list[tuple[int, int]] = []
     for batch in iter_batches(source_path, features=features_per_file, max_bytes=max_bytes):
         summaries.append((len(batch["features"]), len(_compact(batch)) + 1))
-    width = max(3, len(str(len(summaries))))
-    files = tuple(
-        PlannedFile(destination / f"{stem}_{index:0{width}d}.geojson", count, size)
-        for index, (count, size) in enumerate(summaries, 1)
-    )
-    try:
-        manifest, previous, legacy = _previous_outputs(destination, stem)
-    except OSError as error:
-        raise _operation_error("inspect output directory", destination, error) from error
-    paths = [item.path for item in files]
-    if source_path.resolve() in {path.resolve() for path in paths + previous}:
-        raise GeoSplitError("Splitting would overwrite or remove the input.")
-    conflicts = sorted({path for path in paths + previous if path.exists()})
-    if manifest.exists():
-        conflicts.append(manifest)
-    warnings = []
-    if legacy:
-        warnings.append("Pre-manifest GeoSplit outputs were detected and will be adopted with --force.")
-    stale = {path for path in previous if path.exists()} - set(paths)
-    if stale:
-        warnings.append(f"{len(stale)} stale output file(s) will be removed with --force.")
-    if _transaction_path(destination, stem).exists():
-        warnings.append("An interrupted transaction was detected; a real split will recover it first.")
-    return SplitPlan(
-        source_path,
-        destination,
-        files,
-        sum(item.feature_count for item in files),
-        sum(item.size for item in files),
-        tuple(conflicts),
-        tuple(warnings),
-    )
+    return _make_plan(source_path, destination, stem, summaries)
 
 
 def _commit(plan: SplitPlan, stem: str, force: bool, tx: Path) -> tuple[Path, ...]:
@@ -455,7 +490,9 @@ def _commit(plan: SplitPlan, stem: str, force: bool, tx: Path) -> tuple[Path, ..
         try:
             _recover_transaction(plan.output_dir, stem)
         except GeoSplitError as recovery_error:
-            raise GeoSplitError(f"{_operation_error('commit split files', plan.output_dir, error)}; {recovery_error}") from error
+            raise GeoSplitError(
+                f"{_operation_error('commit split files', plan.output_dir, error)}; {recovery_error}"
+            ) from error
         raise _operation_error("commit split files", plan.output_dir, error) from error
     try:
         shutil.rmtree(tx)
@@ -475,6 +512,7 @@ def split_geojson(
     progress: ProgressCallback | None = None,
 ) -> SplitResult:
     """Split a FeatureCollection and return a result summary."""
+    _validate_mode(features_per_file, max_bytes)
     source_path = Path(source)
     destination = _output_dir(source_path, output_dir)
     stem = _safe_stem(source_path, prefix)
@@ -482,31 +520,46 @@ def split_geojson(
         raise GeoSplitError(f"Output path is not a directory: {destination}")
     if destination.exists():
         _recover_transaction(destination, stem)
-    plan = plan_split(
-        source_path,
-        destination,
-        features_per_file=features_per_file,
-        max_bytes=max_bytes,
-        prefix=prefix,
-    )
-    if plan.conflicts and not force:
-        raise GeoSplitError(f"Output already exists: {plan.conflicts[0]}. Use --force to replace it.")
+    try:
+        source_state = source_path.stat()
+    except OSError as error:
+        raise _operation_error("read input", source_path, error) from error
+    try:
+        _disk_preflight(source_path, destination)
+    except OSError as error:
+        raise _operation_error("check available disk space on", destination, error) from error
     tx = _transaction_path(destination, stem)
     try:
         destination.mkdir(parents=True, exist_ok=True)
         tx.mkdir()
         staged = tx / "new"
         staged.mkdir()
+        metadata = _metadata(source_path)
+        batches = _collections(metadata, _features(source_path), features_per_file, max_bytes)
+        summaries: list[tuple[int, int]] = []
+        temporary: list[Path] = []
         processed = 0
-        batches = iter_batches(source_path, features=features_per_file, max_bytes=max_bytes)
-        for created, (item, batch) in enumerate(zip(plan.files, batches, strict=True), 1):
-            data = _compact(batch) + b"\n"
-            if len(batch["features"]) != item.feature_count or len(data) != item.size:
-                raise GeoSplitError("Input changed while the split was being prepared; run the command again.")
-            (staged / item.path.name).write_bytes(data)
-            processed += item.feature_count
-            if progress:
-                progress(processed, created)
+        try:
+            for created, batch in enumerate(batches, 1):
+                data = _compact(batch) + b"\n"
+                path = staged / f"{created:08d}.part"
+                path.write_bytes(data)
+                temporary.append(path)
+                count = len(batch["features"])
+                summaries.append((count, len(data)))
+                processed += count
+                if progress:
+                    progress(processed, created)
+        finally:
+            batches.close()
+        current_state = source_path.stat()
+        if (source_state.st_size, source_state.st_mtime_ns) != (current_state.st_size, current_state.st_mtime_ns):
+            raise GeoSplitError("Input changed while the split was being prepared; run the command again.")
+        plan = _make_plan(source_path, destination, stem, summaries, check_transaction=False)
+        if plan.conflicts and not force:
+            raise GeoSplitError(f"Output already exists: {plan.conflicts[0]}. Use --force to replace it.")
+        for source_file, item in zip(temporary, plan.files, strict=True):
+            source_file.replace(staged / item.path.name)
         manifest = destination / f".{stem}.geosplit.json"
         (staged / manifest.name).write_bytes(
             _compact({"version": 1, "files": [item.path.name for item in plan.files]}) + b"\n"
