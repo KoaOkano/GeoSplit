@@ -17,10 +17,8 @@ def _parse_size(value: str) -> int:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
-def _parsers() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
-    parser = argparse.ArgumentParser(
-        prog="geosplit", description="Split GeoJSON and convert GeoJSON <-> GeoPackage."
-    )
+def _build_parsers() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
+    parser = argparse.ArgumentParser(prog="geosplit", description="Split GeoJSON and convert GeoJSON <-> GeoPackage.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -49,7 +47,7 @@ def _parsers() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentPars
 
 def help_text(topic: str | None = None) -> str:
     """Return general help or detailed help for a command."""
-    parser, commands = _parsers()
+    parser, commands = _build_parsers()
     return (commands[topic] if topic else parser).format_help()
 
 
@@ -61,7 +59,9 @@ def _print_plan(plan: SplitPlan, force: bool) -> None:
     print(f"Total size: {plan.total_bytes:,} bytes")
     print("Files:")
     for item in plan.files:
-        status = " [replace]" if force and item.path in conflicts else " [conflict]" if item.path in conflicts else ""
+        status = ""
+        if item.path in conflicts:
+            status = " [replace]" if force else " [conflict]"
         print(f"  {item.path.name}: {item.feature_count:,} features, {item.size:,} bytes{status}")
     if plan.conflicts:
         print("Conflicts:")
@@ -71,46 +71,57 @@ def _print_plan(plan: SplitPlan, force: bool) -> None:
         print(f"Warning: {warning}")
 
 
+def _progress(feature_count: int, file_count: int) -> None:
+    noun = "file" if file_count == 1 else "files"
+    print(
+        f"\rProcessed {feature_count:,} features — created {file_count:,} {noun}",
+        end="",
+        file=sys.stderr,
+    )
+
+
+def _run_split(args: argparse.Namespace) -> None:
+    if args.dry_run:
+        plan = plan_split(
+            args.input,
+            args.output_dir,
+            features_per_file=args.features,
+            max_bytes=args.size,
+            prefix=args.prefix,
+        )
+        if not args.quiet:
+            _print_plan(plan, args.force)
+        return
+
+    result = split_geojson(
+        args.input,
+        args.output_dir,
+        features_per_file=args.features,
+        max_bytes=args.size,
+        prefix=args.prefix,
+        force=args.force,
+        progress=None if args.quiet else _progress,
+    )
+    if not args.quiet:
+        print(file=sys.stderr)
+        print(f"Created {len(result)} file(s) in {result.files[0].parent}")
+
+
+def _run_convert(args: argparse.Namespace) -> None:
+    path = convert_file(args.input, args.output, layer=args.layer, output_layer=args.output_layer, force=args.force)
+    print(f"Created {path}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser, _ = _parsers()
+    parser, _ = _build_parsers()
     try:
         args = parser.parse_args(argv)
         if args.command == "help":
             print(help_text(args.topic), end="")
         elif args.command == "split":
-            if args.dry_run:
-                plan = plan_split(
-                    args.input,
-                    args.output_dir,
-                    features_per_file=args.features,
-                    max_bytes=args.size,
-                    prefix=args.prefix,
-                )
-                if not args.quiet:
-                    _print_plan(plan, args.force)
-                return 0
-
-            def progress(features: int, files: int) -> None:
-                noun = "file" if files == 1 else "files"
-                print(f"\rProcessed {features:,} features — created {files:,} {noun}", end="", file=sys.stderr)
-
-            result = split_geojson(
-                args.input,
-                args.output_dir,
-                features_per_file=args.features,
-                max_bytes=args.size,
-                prefix=args.prefix,
-                force=args.force,
-                progress=None if args.quiet else progress,
-            )
-            if not args.quiet:
-                print(file=sys.stderr)
-                print(f"Created {len(result)} file(s) in {result.files[0].parent}")
+            _run_split(args)
         else:
-            path = convert_file(
-                args.input, args.output, layer=args.layer, output_layer=args.output_layer, force=args.force
-            )
-            print(f"Created {path}")
+            _run_convert(args)
         return 0
     except GeoSplitError as error:
         parser.exit(2, f"error: {error}\n")

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.3 - 2026-07-04
+
+### Changed
+
+- Refactor streaming, planning, staging, conversion, and CLI internals for clearer responsibilities.
+- Replace per-feature geometry lambdas with named, reusable validators.
+- Add explicit internal types for split paths, output state, JSON events, and closable generators.
+- Centralize repeated source, output-directory, and prefix preparation.
+- Remove redundant exception re-raise blocks and stale type-ignore comments.
+
+### Compatibility
+
+- Preserve all public Python APIs, CLI commands, output formats, manifests, error behavior, and transaction semantics.
+
 ## 0.4.2 - 2026-07-04
 
 ### Performance

@@ -21,14 +21,16 @@ def convert_file(
     """Convert one GeoJSON file to GeoPackage, or one GeoPackage layer to GeoJSON."""
     source, destination = Path(source), Path(destination)
     source_suffix, destination_suffix = source.suffix.lower(), destination.suffix.lower()
-    source_is_gpkg, destination_is_gpkg = source_suffix == ".gpkg", destination_suffix == ".gpkg"
-    if source_is_gpkg == destination_is_gpkg or {source_suffix, destination_suffix} - (_GEOJSON | {".gpkg"}):
+    source_is_package = source_suffix == ".gpkg"
+    destination_is_package = destination_suffix == ".gpkg"
+    unsupported_suffixes = {source_suffix, destination_suffix} - (_GEOJSON | {".gpkg"})
+    if source_is_package == destination_is_package or unsupported_suffixes:
         raise GeoSplitError("Conversion requires one .geojson/.json file and one .gpkg file.")
     if not source.is_file():
         raise GeoSplitError(f"Input does not exist or is not a file: {source}")
-    if layer and not source_is_gpkg:
+    if layer and not source_is_package:
         raise GeoSplitError("--layer only applies when reading a GeoPackage.")
-    if output_layer and not destination_is_gpkg:
+    if output_layer and not destination_is_package:
         raise GeoSplitError("--output-layer only applies when writing a GeoPackage.")
     if destination.exists() and not force:
         raise GeoSplitError(f"Output already exists: {destination}. Use --force to replace it.")
@@ -38,7 +40,7 @@ def convert_file(
         raise GeoSplitError("GeoPackage support is not installed. Run: pip install 'geosplit[gpkg]'") from error
 
     try:
-        if source_is_gpkg:
+        if source_is_package:
             layers = gpd.list_layers(source)["name"].tolist()
             if not layers:
                 raise GeoSplitError("GeoPackage contains no layers.")
@@ -46,15 +48,16 @@ def convert_file(
                 raise GeoSplitError(f"GeoPackage has multiple layers; choose one with --layer: {', '.join(layers)}")
             if layer is not None and layer not in layers:
                 raise GeoSplitError(f"Layer {layer!r} not found. Available layers: {', '.join(layers)}")
-            frame, driver, kwargs = gpd.read_file(source, layer=layer or layers[0]), "GeoJSON", {}
+            frame, driver, options = gpd.read_file(source, layer=layer or layers[0]), "GeoJSON", {}
         else:
-            frame, driver, kwargs = gpd.read_file(source), "GPKG", {"layer": output_layer or destination.stem}
+            frame = gpd.read_file(source)
+            driver, options = "GPKG", {"layer": output_layer or destination.stem}
 
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with TemporaryDirectory(prefix=".geosplit-", dir=destination.parent) as temporary:
-            output = Path(temporary) / destination.name
-            frame.to_file(output, driver=driver, index=False, **kwargs)
-            output.replace(destination)
+        with TemporaryDirectory(prefix=".geosplit-", dir=destination.parent) as temporary_dir:
+            temporary_output = Path(temporary_dir) / destination.name
+            frame.to_file(temporary_output, driver=driver, index=False, **options)
+            temporary_output.replace(destination)
     except GeoSplitError:
         raise
     except Exception as error:

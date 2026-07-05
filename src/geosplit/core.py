@@ -7,7 +7,7 @@ import math
 import re
 import shutil
 from codecs import BOM_UTF8
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -17,7 +17,9 @@ import ijson
 import simplejson as json
 
 JsonObject = dict[str, Any]
+_JsonEvent = tuple[str, str, Any]
 ProgressCallback = Callable[[int, int], None]
+_BatchSummary = tuple[int, int]
 _MAX_DEPTH = 100
 _SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*(B|KB|KIB|MB|MIB|GB|GIB)?$", re.I)
 _UNITS = {
@@ -78,6 +80,20 @@ class SplitResult(Sequence[Path]):
         return len(self.files)
 
 
+@dataclass(frozen=True)
+class _SplitPaths:
+    source: Path
+    output_dir: Path
+    stem: str
+
+
+@dataclass(frozen=True)
+class _OutputState:
+    manifest: Path
+    files: tuple[Path, ...]
+    legacy: bool
+
+
 def parse_size(value: str) -> int:
     """Convert values such as ``500KB`` or ``2.5MiB`` to bytes."""
     if not (match := _SIZE.fullmatch(value.strip())):
@@ -108,12 +124,36 @@ def _check_depth(depth: int) -> None:
         raise GeoSplitError(f"GeoJSON nesting exceeds the {_MAX_DEPTH}-level safety limit.")
 
 
-def _metadata(path: Path) -> JsonObject:
+def _skip_container(events: Iterator[_JsonEvent]) -> None:
+    depth = 1
+    for _, event, _ in events:
+        depth += event in {"start_map", "start_array"}
+        _check_depth(depth)
+        depth -= event in {"end_map", "end_array"}
+        if not depth:
+            return
+
+
+def _build_value(events: Iterator[_JsonEvent], event: str, value: Any) -> Any:
+    builder = ijson.ObjectBuilder()
+    builder.event(event, value)
+    depth = int(event in {"start_map", "start_array"})
+    while depth:
+        _, event, value = next(events)
+        depth += event in {"start_map", "start_array"}
+        _check_depth(depth)
+        builder.event(event, value)
+        depth -= event in {"end_map", "end_array"}
+    return builder.value
+
+
+def _read_metadata(path: Path) -> JsonObject:
+    """Read top-level metadata while validating the complete JSON document."""
     metadata: JsonObject = {}
     has_features = False
     try:
         with _open(path) as source:
-            events = iter(ijson.parse(source))
+            events: Iterator[_JsonEvent] = iter(ijson.parse(source))
             if next(events)[1] != "start_map":
                 raise GeoSplitError("Input must be a GeoJSON FeatureCollection.")
             for _, event, key in events:
@@ -126,28 +166,11 @@ def _metadata(path: Path) -> JsonObject:
                     if event != "start_array":
                         raise GeoSplitError("GeoJSON 'features' must be an array.")
                     has_features = True
-                    depth = 1
-                    for _, event, _ in events:
-                        depth += event in {"start_map", "start_array"}
-                        _check_depth(depth)
-                        depth -= event in {"end_map", "end_array"}
-                        if not depth:
-                            break
+                    _skip_container(events)
                     continue
-                builder = ijson.ObjectBuilder()
-                builder.event(event, value)
-                depth = int(event in {"start_map", "start_array"})
-                while depth:
-                    _, event, value = next(events)
-                    depth += event in {"start_map", "start_array"}
-                    _check_depth(depth)
-                    builder.event(event, value)
-                    depth -= event in {"end_map", "end_array"}
-                metadata[key] = builder.value
+                metadata[key] = _build_value(events, event, value)
             if next(events, None) is not None:
                 raise GeoSplitError("Input contains data after the GeoJSON object.")
-    except GeoSplitError:
-        raise
     except (OSError, UnicodeError, ijson.JSONError, StopIteration, RecursionError) as error:
         raise GeoSplitError(f"Cannot read valid GeoJSON from {path}: {error}") from error
     if metadata.get("type") != "FeatureCollection" or not has_features:
@@ -174,6 +197,34 @@ def _ring(value: Any) -> bool:
     return _line(value, 4) and value[0] == value[-1]
 
 
+def _points(value: Any) -> bool:
+    return isinstance(value, list) and all(_position(item) for item in value)
+
+
+def _lines(value: Any) -> bool:
+    return isinstance(value, list) and all(_line(item) for item in value)
+
+
+def _polygon(value: Any) -> bool:
+    return isinstance(value, list) and all(_ring(item) for item in value)
+
+
+def _polygons(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(polygon, list) and all(_ring(ring) for ring in polygon) for polygon in value
+    )
+
+
+_COORDINATE_VALIDATORS: dict[str, Callable[[Any], bool]] = {
+    "Point": _position,
+    "MultiPoint": _points,
+    "LineString": _line,
+    "MultiLineString": _lines,
+    "Polygon": _polygon,
+    "MultiPolygon": _polygons,
+}
+
+
 def _validate_geometry(geometry: Any, index: int, allow_null: bool = True) -> None:
     if geometry is None and allow_null:
         return
@@ -181,30 +232,20 @@ def _validate_geometry(geometry: Any, index: int, allow_null: bool = True) -> No
         raise GeoSplitError(f"Feature {index} has invalid geometry.")
     geometry_type = geometry.get("type")
     coordinates = geometry.get("coordinates")
-    valid = {
-        "Point": lambda: _position(coordinates),
-        "MultiPoint": lambda: isinstance(coordinates, list) and all(_position(item) for item in coordinates),
-        "LineString": lambda: _line(coordinates),
-        "MultiLineString": lambda: isinstance(coordinates, list) and all(_line(item) for item in coordinates),
-        "Polygon": lambda: isinstance(coordinates, list) and all(_ring(item) for item in coordinates),
-        "MultiPolygon": lambda: (
-            isinstance(coordinates, list)
-            and all(isinstance(polygon, list) and all(_ring(ring) for ring in polygon) for polygon in coordinates)
-        ),
-    }
     if geometry_type == "GeometryCollection":
         geometries = geometry.get("geometries")
         if not isinstance(geometries, list):
             raise GeoSplitError(f"Feature {index} has invalid geometry.")
         for child in geometries:
             _validate_geometry(child, index, allow_null=False)
-    elif geometry_type in valid and coordinates == []:
+    elif geometry_type in _COORDINATE_VALIDATORS and coordinates == []:
         return
-    elif geometry_type not in valid or not valid[geometry_type]():
+    elif geometry_type not in _COORDINATE_VALIDATORS or not _COORDINATE_VALIDATORS[geometry_type](coordinates):
         raise GeoSplitError(f"Feature {index} has invalid geometry or non-numeric coordinates.")
 
 
-def _features(path: Path) -> Iterator[Any]:
+def _iter_features(path: Path) -> Generator[Any, None, None]:
+    """Stream and validate each feature in source order."""
     try:
         with _open(path) as source:
             for index, feature in enumerate(ijson.items(source, "features.item"), 1):
@@ -218,13 +259,11 @@ def _features(path: Path) -> Iterator[Any]:
                     raise GeoSplitError(f"Feature {index} is not a valid GeoJSON Feature.")
                 _validate_geometry(feature["geometry"], index)
                 yield feature
-    except GeoSplitError:
-        raise
     except (OSError, UnicodeError, ijson.JSONError, RecursionError) as error:
         raise GeoSplitError(f"Cannot read valid GeoJSON from {path}: {error}") from error
 
 
-def _chunks_by_count(features: Iterable[Any], limit: int) -> Iterator[list[Any]]:
+def _chunks_by_count(features: Iterable[Any], limit: int) -> Generator[list[Any], None, None]:
     chunk: list[Any] = []
     for feature in features:
         chunk.append(feature)
@@ -235,7 +274,7 @@ def _chunks_by_count(features: Iterable[Any], limit: int) -> Iterator[list[Any]]
         yield chunk
 
 
-def _chunks_by_size(metadata: JsonObject, features: Iterable[Any], limit: int) -> Iterator[list[Any]]:
+def _chunks_by_size(metadata: JsonObject, features: Iterable[Any], limit: int) -> Generator[list[Any], None, None]:
     fixed = len(_compact({**metadata, "features": []})) + 1
     if fixed > limit:
         raise GeoSplitError(f"The GeoJSON metadata alone exceeds the {limit}-byte limit.")
@@ -263,17 +302,17 @@ def _validate_mode(features: int | None, max_bytes: int | None) -> None:
         raise GeoSplitError("Maximum file size must be at least 1 byte.")
 
 
-def _collections(
+def _iter_collections(
     metadata: JsonObject,
-    feature_stream: Iterator[Any],
+    feature_stream: Generator[Any, None, None],
     features: int | None,
     max_bytes: int | None,
-) -> Iterator[JsonObject]:
-    chunks = (
-        _chunks_by_count(feature_stream, features)
-        if features is not None
-        else _chunks_by_size(metadata, feature_stream, max_bytes)  # type: ignore[arg-type]
-    )
+) -> Generator[JsonObject, None, None]:
+    if features is not None:
+        chunks = _chunks_by_count(feature_stream, features)
+    else:
+        assert max_bytes is not None
+        chunks = _chunks_by_size(metadata, feature_stream, max_bytes)
     yielded = False
     try:
         for chunk in chunks:
@@ -282,7 +321,7 @@ def _collections(
         if not yielded:
             yield {**metadata, "features": []}
     finally:
-        chunks.close()  # type: ignore[attr-defined]
+        chunks.close()
         feature_stream.close()
 
 
@@ -292,7 +331,7 @@ def iter_batches(
     """Yield validated FeatureCollections without writing files."""
     _validate_mode(features, max_bytes)
     path = Path(source)
-    yield from _collections(_metadata(path), _features(path), features, max_bytes)
+    yield from _iter_collections(_read_metadata(path), _iter_features(path), features, max_bytes)
 
 
 def _disk_preflight(source: Path, destination: Path) -> None:
@@ -318,6 +357,14 @@ def _output_dir(source: Path, output_dir: str | Path | None) -> Path:
     return Path(output_dir) if output_dir is not None else source.with_name(f"{source.stem}_split")
 
 
+def _split_paths(source: str | Path, output_dir: str | Path | None, prefix: str | None) -> _SplitPaths:
+    source_path = Path(source)
+    destination = _output_dir(source_path, output_dir)
+    if destination.exists() and not destination.is_dir():
+        raise GeoSplitError(f"Output path is not a directory: {destination}")
+    return _SplitPaths(source_path, destination, _safe_stem(source_path, prefix))
+
+
 def _legacy_outputs(output_dir: Path, stem: str) -> list[Path]:
     if not output_dir.is_dir():
         return []
@@ -335,11 +382,12 @@ def _legacy_outputs(output_dir: Path, stem: str) -> list[Path]:
     return contiguous
 
 
-def _previous_outputs(output_dir: Path, stem: str) -> tuple[Path, list[Path], bool]:
+def _load_output_state(output_dir: Path, stem: str) -> _OutputState:
+    """Load managed output, or discover contiguous output from pre-manifest releases."""
     manifest = output_dir / f".{stem}.geosplit.json"
     if not manifest.exists():
         legacy = _legacy_outputs(output_dir, stem)
-        return manifest, legacy, bool(legacy)
+        return _OutputState(manifest, tuple(legacy), bool(legacy))
     try:
         names = json.loads(manifest.read_text(encoding="utf-8"))["files"]
         pattern = re.compile(rf"{re.escape(stem)}_\d+\.geojson")
@@ -349,7 +397,7 @@ def _previous_outputs(output_dir: Path, stem: str) -> tuple[Path, list[Path], bo
         raise
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise GeoSplitError(f"Invalid GeoSplit manifest: {manifest}") from error
-    return manifest, [output_dir / name for name in names], False
+    return _OutputState(manifest, tuple(output_dir / name for name in names), False)
 
 
 def _transaction_path(output_dir: Path, stem: str) -> Path:
@@ -372,6 +420,7 @@ def _journal(tx: Path, status: str, existing: list[Path], targets: list[Path]) -
 
 
 def _recover_transaction(output_dir: Path, stem: str) -> None:
+    """Restore old output or discard a completed/interrupted transaction."""
     tx = _transaction_path(output_dir, stem)
     if not tx.exists():
         return
@@ -405,33 +454,34 @@ def _recover_transaction(output_dir: Path, stem: str) -> None:
         raise GeoSplitError(f"Cannot safely recover interrupted transaction: {tx}") from error
 
 
-def _make_plan(
+def _build_plan(
     source: Path,
     destination: Path,
     stem: str,
-    summaries: list[tuple[int, int]],
+    summaries: list[_BatchSummary],
     *,
     check_transaction: bool = True,
 ) -> SplitPlan:
+    """Build names, conflicts, and warnings from already-computed batch summaries."""
     width = max(3, len(str(len(summaries))))
     files = tuple(
         PlannedFile(destination / f"{stem}_{index:0{width}d}.geojson", count, size)
         for index, (count, size) in enumerate(summaries, 1)
     )
     try:
-        manifest, previous, legacy = _previous_outputs(destination, stem)
+        output_state = _load_output_state(destination, stem)
     except OSError as error:
         raise _operation_error("inspect output directory", destination, error) from error
     paths = [item.path for item in files]
-    if source.resolve() in {path.resolve() for path in paths + previous}:
+    if source.resolve() in {path.resolve() for path in [*paths, *output_state.files]}:
         raise GeoSplitError("Splitting would overwrite or remove the input.")
-    conflicts = sorted({path for path in paths + previous if path.exists()})
-    if manifest.exists():
-        conflicts.append(manifest)
+    conflicts = sorted({path for path in [*paths, *output_state.files] if path.exists()})
+    if output_state.manifest.exists():
+        conflicts.append(output_state.manifest)
     warnings = []
-    if legacy:
+    if output_state.legacy:
         warnings.append("Pre-manifest GeoSplit outputs were detected and will be adopted with --force.")
-    stale = {path for path in previous if path.exists()} - set(paths)
+    stale = {path for path in output_state.files if path.exists()} - set(paths)
     if stale:
         warnings.append(f"{len(stale)} stale output file(s) will be removed with --force.")
     if check_transaction and _transaction_path(destination, stem).exists():
@@ -457,25 +507,24 @@ def plan_split(
 ) -> SplitPlan:
     """Return a complete split plan without changing the filesystem."""
     _validate_mode(features_per_file, max_bytes)
-    source_path = Path(source)
-    destination = _output_dir(source_path, output_dir)
-    if destination.exists() and not destination.is_dir():
-        raise GeoSplitError(f"Output path is not a directory: {destination}")
-    stem = _safe_stem(source_path, prefix)
-    summaries: list[tuple[int, int]] = []
-    for batch in iter_batches(source_path, features=features_per_file, max_bytes=max_bytes):
+    paths = _split_paths(source, output_dir, prefix)
+    summaries: list[_BatchSummary] = []
+    for batch in iter_batches(paths.source, features=features_per_file, max_bytes=max_bytes):
         summaries.append((len(batch["features"]), len(_compact(batch)) + 1))
-    return _make_plan(source_path, destination, stem, summaries)
+    return _build_plan(paths.source, paths.output_dir, paths.stem, summaries)
 
 
-def _commit(plan: SplitPlan, stem: str, force: bool, tx: Path) -> tuple[Path, ...]:
-    manifest, previous, _ = _previous_outputs(plan.output_dir, stem)
+def _commit_transaction(plan: SplitPlan, stem: str, force: bool, tx: Path) -> tuple[Path, ...]:
+    """Atomically replace managed output using the prepared transaction."""
+    output_state = _load_output_state(plan.output_dir, stem)
     paths = [item.path for item in plan.files]
-    existing = sorted({path for path in paths + previous if path.exists()})
-    if not force and (conflict := manifest if manifest.exists() else next(iter(existing), None)):
+    existing = sorted({path for path in [*paths, *output_state.files] if path.exists()})
+    if not force and (
+        conflict := output_state.manifest if output_state.manifest.exists() else next(iter(existing), None)
+    ):
         raise GeoSplitError(f"Output already exists: {conflict}. Use --force to replace it.")
-    managed = [*existing, manifest] if manifest.exists() else existing
-    targets = [*paths, manifest]
+    managed = [*existing, output_state.manifest] if output_state.manifest.exists() else existing
+    targets = [*paths, output_state.manifest]
     backups = tx / "backups"
     try:
         _journal(tx, "prepared", managed, targets)
@@ -484,7 +533,7 @@ def _commit(plan: SplitPlan, stem: str, force: bool, tx: Path) -> tuple[Path, ..
             path.replace(backups / path.name)
         for path in paths:
             (tx / "new" / path.name).replace(path)
-        (tx / "new" / manifest.name).replace(manifest)
+        (tx / "new" / output_state.manifest.name).replace(output_state.manifest)
         _journal(tx, "complete", managed, targets)
     except OSError as error:
         try:
@@ -501,6 +550,39 @@ def _commit(plan: SplitPlan, stem: str, force: bool, tx: Path) -> tuple[Path, ..
     return tuple(paths)
 
 
+def _stage_batches(
+    staged: Path,
+    batches: Generator[JsonObject, None, None],
+    progress: ProgressCallback | None,
+) -> tuple[list[_BatchSummary], list[Path]]:
+    """Write numbered temporary batches and return their counts and sizes."""
+    summaries: list[_BatchSummary] = []
+    temporary_files: list[Path] = []
+    processed = 0
+    try:
+        for index, batch in enumerate(batches, 1):
+            data = _compact(batch) + b"\n"
+            temporary = staged / f"{index:08d}.part"
+            temporary.write_bytes(data)
+            temporary_files.append(temporary)
+            feature_count = len(batch["features"])
+            summaries.append((feature_count, len(data)))
+            processed += feature_count
+            if progress:
+                progress(processed, index)
+    finally:
+        batches.close()
+    return summaries, temporary_files
+
+
+def _finalize_staged_files(staged: Path, temporary_files: list[Path], plan: SplitPlan, stem: str) -> None:
+    """Apply final names and add the manifest inside the staging directory."""
+    for temporary, item in zip(temporary_files, plan.files, strict=True):
+        temporary.replace(staged / item.path.name)
+    manifest = staged / f".{stem}.geosplit.json"
+    manifest.write_bytes(_compact({"version": 1, "files": [item.path.name for item in plan.files]}) + b"\n")
+
+
 def split_geojson(
     source: str | Path,
     output_dir: str | Path | None = None,
@@ -513,11 +595,8 @@ def split_geojson(
 ) -> SplitResult:
     """Split a FeatureCollection and return a result summary."""
     _validate_mode(features_per_file, max_bytes)
-    source_path = Path(source)
-    destination = _output_dir(source_path, output_dir)
-    stem = _safe_stem(source_path, prefix)
-    if destination.exists() and not destination.is_dir():
-        raise GeoSplitError(f"Output path is not a directory: {destination}")
+    paths = _split_paths(source, output_dir, prefix)
+    source_path, destination, stem = paths.source, paths.output_dir, paths.stem
     if destination.exists():
         _recover_transaction(destination, stem)
     try:
@@ -534,39 +613,17 @@ def split_geojson(
         tx.mkdir()
         staged = tx / "new"
         staged.mkdir()
-        metadata = _metadata(source_path)
-        batches = _collections(metadata, _features(source_path), features_per_file, max_bytes)
-        summaries: list[tuple[int, int]] = []
-        temporary: list[Path] = []
-        processed = 0
-        try:
-            for created, batch in enumerate(batches, 1):
-                data = _compact(batch) + b"\n"
-                path = staged / f"{created:08d}.part"
-                path.write_bytes(data)
-                temporary.append(path)
-                count = len(batch["features"])
-                summaries.append((count, len(data)))
-                processed += count
-                if progress:
-                    progress(processed, created)
-        finally:
-            batches.close()
+        metadata = _read_metadata(source_path)
+        batches = _iter_collections(metadata, _iter_features(source_path), features_per_file, max_bytes)
+        summaries, temporary_files = _stage_batches(staged, batches, progress)
         current_state = source_path.stat()
         if (source_state.st_size, source_state.st_mtime_ns) != (current_state.st_size, current_state.st_mtime_ns):
             raise GeoSplitError("Input changed while the split was being prepared; run the command again.")
-        plan = _make_plan(source_path, destination, stem, summaries, check_transaction=False)
+        plan = _build_plan(source_path, destination, stem, summaries, check_transaction=False)
         if plan.conflicts and not force:
             raise GeoSplitError(f"Output already exists: {plan.conflicts[0]}. Use --force to replace it.")
-        for source_file, item in zip(temporary, plan.files, strict=True):
-            source_file.replace(staged / item.path.name)
-        manifest = destination / f".{stem}.geosplit.json"
-        (staged / manifest.name).write_bytes(
-            _compact({"version": 1, "files": [item.path.name for item in plan.files]}) + b"\n"
-        )
-        files = _commit(plan, stem, force, tx)
-    except GeoSplitError:
-        raise
+        _finalize_staged_files(staged, temporary_files, plan, stem)
+        files = _commit_transaction(plan, stem, force, tx)
     except OSError as error:
         raise _operation_error("write split files", destination, error) from error
     finally:
