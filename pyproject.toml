@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "geosplit"
 dynamic = ["version"]
-description = "Split GeoJSON by feature count or file size and convert GeoJSON to and from GeoPackage"
+description = "Split and validate GeoJSON, and convert GeoJSON to and from GeoPackage"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

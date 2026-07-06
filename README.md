@@ -1,6 +1,6 @@
 # GeoSplit
 
-GeoSplit safely splits a GeoJSON `FeatureCollection` by feature count or exact file size. It can also convert GeoJSON to and from GeoPackage.
+GeoSplit safely validates GeoJSON and splits a `FeatureCollection` by feature count or exact file size. It can also convert GeoJSON to and from GeoPackage.
 
 The splitter streams large inputs, preserves coordinate precision, limits memory to the active output chunk, checks available disk space, and uses recoverable output transactions.
 
@@ -30,9 +30,28 @@ Check the installation:
 geosplit --version
 geosplit --help
 geosplit help split
+geosplit help validate
 ```
 
 If `geosplit` is not on your PATH, replace it with `python -m geosplit` or, on Windows, `py -m geosplit`.
+
+## Validate GeoJSON
+
+Validate a complete file without creating output:
+
+```bash
+geosplit validate input.geojson
+```
+
+The report includes feature and geometry counts, null geometries, maximum nesting, coordinate dimensions, and warnings. Invalid geometry errors identify the feature and coordinate path.
+
+Produce a machine-readable report:
+
+```bash
+geosplit validate input.geojson --json
+```
+
+Validation checks JSON and GeoJSON structure, recognized geometry types, coordinate nesting, numeric finite coordinates, polygon ring length and closure, trailing data, and the nesting safety limit. It does not check geographic topology such as polygon self-intersections or silently repair data.
 
 ## Split GeoJSON
 
@@ -140,6 +159,18 @@ print(result.total_bytes)
 ```
 
 Use `max_bytes` instead of `features_per_file` for exact-size splitting.
+
+Validate from Python:
+
+```python
+from geosplit import validate_geojson
+
+report = validate_geojson("world.geojson")
+print(report.valid)
+print(report.feature_count)
+print(report.geometry_counts)
+print(report.errors)
+```
 
 ## Safety behavior
 

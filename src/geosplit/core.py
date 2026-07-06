@@ -19,6 +19,7 @@ import simplejson as json
 JsonObject = dict[str, Any]
 _JsonEvent = tuple[str, str, Any]
 ProgressCallback = Callable[[int, int], None]
+_GeometryValidator = Callable[[Any, int], None]
 _BatchSummary = tuple[int, int]
 _MAX_DEPTH = 100
 _SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*(B|KB|KIB|MB|MIB|GB|GIB)?$", re.I)
@@ -147,7 +148,7 @@ def _build_value(events: Iterator[_JsonEvent], event: str, value: Any) -> Any:
     return builder.value
 
 
-def _read_metadata(path: Path) -> JsonObject:
+def _read_metadata(path: Path, *, keep_bbox: bool = False) -> JsonObject:
     """Read top-level metadata while validating the complete JSON document."""
     metadata: JsonObject = {}
     has_features = False
@@ -175,7 +176,8 @@ def _read_metadata(path: Path) -> JsonObject:
         raise GeoSplitError(f"Cannot read valid GeoJSON from {path}: {error}") from error
     if metadata.get("type") != "FeatureCollection" or not has_features:
         raise GeoSplitError("Input must be a GeoJSON FeatureCollection.")
-    metadata.pop("bbox", None)
+    if not keep_bbox:
+        metadata.pop("bbox", None)
     return metadata
 
 
@@ -244,27 +246,35 @@ def _validate_geometry(geometry: Any, index: int, allow_null: bool = True) -> No
         raise GeoSplitError(f"Feature {index} has invalid geometry or non-numeric coordinates.")
 
 
-def _iter_features(path: Path) -> Generator[Any, None, None]:
+def _validate_feature(feature: Any, index: int) -> JsonObject:
+    if (
+        not isinstance(feature, dict)
+        or feature.get("type") != "Feature"
+        or "geometry" not in feature
+        or "properties" not in feature
+        or not isinstance(feature.get("properties"), (dict, type(None)))
+    ):
+        raise GeoSplitError(f"Feature {index} is not a valid GeoJSON Feature.")
+    return feature
+
+
+def _iter_features(
+    path: Path, geometry_validator: _GeometryValidator | None = None
+) -> Generator[JsonObject, None, None]:
     """Stream and validate each feature in source order."""
+    validator = geometry_validator or _validate_geometry
     try:
         with _open(path) as source:
             for index, feature in enumerate(ijson.items(source, "features.item"), 1):
-                if (
-                    not isinstance(feature, dict)
-                    or feature.get("type") != "Feature"
-                    or "geometry" not in feature
-                    or "properties" not in feature
-                    or not isinstance(feature.get("properties"), (dict, type(None)))
-                ):
-                    raise GeoSplitError(f"Feature {index} is not a valid GeoJSON Feature.")
-                _validate_geometry(feature["geometry"], index)
+                feature = _validate_feature(feature, index)
+                validator(feature["geometry"], index)
                 yield feature
     except (OSError, UnicodeError, ijson.JSONError, RecursionError) as error:
         raise GeoSplitError(f"Cannot read valid GeoJSON from {path}: {error}") from error
 
 
-def _chunks_by_count(features: Iterable[Any], limit: int) -> Generator[list[Any], None, None]:
-    chunk: list[Any] = []
+def _chunks_by_count(features: Iterable[JsonObject], limit: int) -> Generator[list[JsonObject], None, None]:
+    chunk: list[JsonObject] = []
     for feature in features:
         chunk.append(feature)
         if len(chunk) == limit:
@@ -274,11 +284,13 @@ def _chunks_by_count(features: Iterable[Any], limit: int) -> Generator[list[Any]
         yield chunk
 
 
-def _chunks_by_size(metadata: JsonObject, features: Iterable[Any], limit: int) -> Generator[list[Any], None, None]:
+def _chunks_by_size(
+    metadata: JsonObject, features: Iterable[JsonObject], limit: int
+) -> Generator[list[JsonObject], None, None]:
     fixed = len(_compact({**metadata, "features": []})) + 1
     if fixed > limit:
         raise GeoSplitError(f"The GeoJSON metadata alone exceeds the {limit}-byte limit.")
-    chunk: list[Any] = []
+    chunk: list[JsonObject] = []
     used = fixed
     for index, feature in enumerate(features, 1):
         feature_size = len(_compact(feature))
@@ -304,7 +316,7 @@ def _validate_mode(features: int | None, max_bytes: int | None) -> None:
 
 def _iter_collections(
     metadata: JsonObject,
-    feature_stream: Generator[Any, None, None],
+    feature_stream: Generator[JsonObject, None, None],
     features: int | None,
     max_bytes: int | None,
 ) -> Generator[JsonObject, None, None]:

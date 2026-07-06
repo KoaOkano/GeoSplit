@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0 - 2026-07-07
+
+### Added
+
+- Add `geosplit validate` for non-writing GeoJSON validation.
+- Add machine-readable validation reports with `geosplit validate input.geojson --json`.
+- Add the public `validate_geojson()` API and `ValidationReport` result type.
+- Report feature counts, geometry counts, null geometries, maximum nesting, and coordinate dimensions.
+- Report exact feature and coordinate paths for invalid geometry structures.
+- Warn about mixed coordinate dimensions and dimensions greater than three.
+
+### Changed
+
+- Centralize repeated validation traversal and strengthen internal stream, feature, and error types.
+- Clarify conversion path handling without changing conversion behavior.
+
+### Compatibility
+
+- Preserve all 0.4.3 splitting, conversion, manifest, transaction, CLI, and Python API behavior.
+
+### Tests
+
+- Add validation coverage for every geometry type, empty geometries, malformed and deeply nested JSON,
+  detailed coordinate errors, JSON and human CLI output, no-write behavior, and bounded memory.
+
 ## 0.4.3 - 2026-07-04
 
 ### Changed
