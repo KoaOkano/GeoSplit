@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.5 - 2026-07-07
+
+### Added
+
+- Add interactive progress display for split, validate, and convert commands.
+- Add `--dryrun` as an alias for the existing `--dry-run` split option. ;D
+- Add GeoPackage input support to `geosplit split` with feature-count splitting.
+- Keep the same GeoPackage layer name in every split output file.
+
+### Changed
+
+- Generalize managed split output tracking so GeoJSON and GeoPackage outputs share the same manifest and transaction safety behavior.
+
+### Compatibility
+
+- Preserve `--dry-run`, GeoJSON split behavior, conversion behavior, and public Python APIs.
+- Keep size-based splitting unsupported for GeoPackage input; use `--features` instead.
+
+### Tests
+
+- Add coverage for `--dryrun`, interactive progress output, GeoPackage split planning, GeoPackage layer handling, and the GeoPackage size-mode error.
+
 ## 0.5.0 - 2026-07-07
 
 ### Added

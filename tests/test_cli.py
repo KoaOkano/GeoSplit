@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,10 @@ def test_split_command(tmp_path: Path, capsys) -> None:
 
 def test_help_command(capsys) -> None:
     assert main(["help", "split"]) == 0
-    assert "--features" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "--features" in output
+    assert "--dryrun" in output
+    assert "--layer" in output
     assert "convert" in help_text()
 
 
@@ -29,7 +33,7 @@ def test_invalid_size_has_useful_error(capsys) -> None:
 def test_dry_run_writes_nothing(tmp_path: Path, capsys) -> None:
     source = tmp_path / "data.geojson"
     source.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
-    assert main(["split", str(source), "--features", "10", "--dry-run"]) == 0
+    assert main(["split", str(source), "--features", "10", "--dryrun"]) == 0
     assert not source.with_name("data_split").exists()
     output = capsys.readouterr().out
     assert "Features: 0" in output
@@ -58,11 +62,32 @@ def test_quiet_suppresses_split_output(tmp_path: Path, capsys) -> None:
     assert captured.err == ""
 
 
-def test_progress_output(tmp_path: Path, capsys) -> None:
+def test_progress_output(tmp_path: Path, capsys, monkeypatch) -> None:
     source = tmp_path / "data.geojson"
     source.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
     assert main(["split", str(source), "--features", "10"]) == 0
-    assert "Processed 0 features — created 1 file" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "Reading features" in err
+    assert "Writing chunks" in err
+    assert "Validating output" in err
+
+
+def test_geopackage_size_split_has_clear_error(capsys) -> None:
+    with pytest.raises(SystemExit):
+        main(["split", "input.gpkg", "--size", "10MB"])
+    assert (
+        "Size-based splitting is not supported for GeoPackage input. Use --features instead."
+        in capsys.readouterr().err
+    )
+
+
+def test_rejects_layer_for_geojson_split(tmp_path: Path, capsys) -> None:
+    source = tmp_path / "data.geojson"
+    source.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+    with pytest.raises(SystemExit):
+        main(["split", str(source), "--features", "10", "--layer", "roads"])
+    assert "--layer only applies when splitting a GeoPackage" in capsys.readouterr().err
 
 
 def test_version_option(capsys) -> None:

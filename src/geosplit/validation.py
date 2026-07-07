@@ -11,6 +11,7 @@ from typing import Any, NoReturn, cast
 from .core import GeoSplitError, _is_number, _iter_features, _read_metadata
 
 _ItemValidator = Callable[[Any, int, str], None]
+ProgressCallback = Callable[[int], None]
 
 
 @dataclass(frozen=True)
@@ -162,7 +163,7 @@ def _warnings(dimensions: set[int]) -> tuple[str, ...]:
     return tuple(warnings)
 
 
-def validate_geojson(source: str | Path) -> ValidationReport:
+def validate_geojson(source: str | Path, progress: ProgressCallback | None = None) -> ValidationReport:
     """Validate a GeoJSON FeatureCollection without writing to the filesystem."""
     path = Path(source)
     feature_count = null_geometry_count = maximum_nesting = 0
@@ -175,6 +176,8 @@ def validate_geojson(source: str | Path) -> ValidationReport:
         maximum_nesting = max(2, *(1 + _nesting(value) for value in metadata.values()))
         feature_stream = _iter_features(path, _validate_geometry)
         for feature_count, feature in enumerate(feature_stream, 1):
+            if progress:
+                progress(feature_count)
             geometry = feature["geometry"]
             maximum_nesting = max(maximum_nesting, 2 + _nesting(feature))
             if geometry is None:

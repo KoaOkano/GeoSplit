@@ -1,8 +1,8 @@
 # GeoSplit
 
-GeoSplit safely validates GeoJSON and splits a `FeatureCollection` by feature count or exact file size. It can also convert GeoJSON to and from GeoPackage.
+GeoSplit safely validates GeoJSON, splits a GeoJSON `FeatureCollection`, splits GeoPackage layers by feature count, and converts GeoJSON to and from GeoPackage.
 
-The splitter streams large inputs, preserves coordinate precision, limits memory to the active output chunk, checks available disk space, and uses recoverable output transactions.
+The GeoJSON splitter streams large inputs, preserves coordinate precision, limits memory to the active output chunk, checks available disk space, and uses recoverable output transactions. GeoPackage support is optional.
 
 ## Install
 
@@ -53,7 +53,7 @@ geosplit validate input.geojson --json
 
 Validation checks JSON and GeoJSON structure, recognized geometry types, coordinate nesting, numeric finite coordinates, polygon ring length and closure, trailing data, and the nesting safety limit. It does not check geographic topology such as polygon self-intersections or silently repair data.
 
-## Split GeoJSON
+## Split GeoJSON and GeoPackage
 
 Split every 1,000 features:
 
@@ -75,15 +75,29 @@ geosplit split world.geojson output --size 10MB
 
 Sizes accept `B`, `KB`, `KiB`, `MB`, `MiB`, `GB`, and `GiB`. Every output is a complete compact GeoJSON document. A feature that cannot fit by itself produces an error.
 
+Split a GeoPackage layer by feature count:
+
+```bash
+geosplit split roads.gpkg --features 1000
+```
+
+If a GeoPackage contains multiple layers, choose one:
+
+```bash
+geosplit split map.gpkg --layer roads --features 1000
+```
+
+GeoPackage input creates GeoPackage output files and keeps the same layer name inside every chunk. Size-based splitting is not supported for GeoPackage input. Use `--features` instead.
+
 ### Preview with dry-run
 
 Show planned files, feature counts, sizes, warnings, and conflicts without creating anything:
 
 ```bash
-geosplit split world.geojson --features 1000 --dry-run
+geosplit split world.geojson --features 1000 --dryrun
 ```
 
-Dry-run still reads and validates the complete input.
+Dry-run still reads and validates the complete input. The older spelling `--dry-run` is still accepted.
 
 ### Other split options
 
@@ -111,7 +125,17 @@ Options can be combined:
 geosplit split world.geojson output --size 50MiB --prefix region --force --quiet
 ```
 
-Output files are numbered automatically, for example `world_001.geojson`. GeoSplit preserves top-level metadata except `bbox`, which would no longer describe each split collection. Interrupted transactions are recovered on the next run.
+Output files are numbered automatically, for example `world_001.geojson` or `roads_001.gpkg`. GeoSplit preserves top-level GeoJSON metadata except `bbox`, which would no longer describe each split collection. Interrupted transactions are recovered on the next run.
+
+In an interactive terminal, long-running `split`, `validate`, and `convert` commands show progress, for example:
+
+```text
+Reading features     45,000 / 180,000
+Writing chunks       12 / 48
+Validating output    48 / 48
+```
+
+Use `--quiet` with `split` to suppress split progress and success output. Validation JSON output stays machine-readable and does not include progress text.
 
 ## Convert GeoJSON and GeoPackage
 

@@ -377,10 +377,10 @@ def _split_paths(source: str | Path, output_dir: str | Path | None, prefix: str 
     return _SplitPaths(source_path, destination, _safe_stem(source_path, prefix))
 
 
-def _legacy_outputs(output_dir: Path, stem: str) -> list[Path]:
+def _legacy_outputs(output_dir: Path, stem: str, suffix: str = ".geojson") -> list[Path]:
     if not output_dir.is_dir():
         return []
-    pattern = re.compile(rf"{re.escape(stem)}_(\d{{3,}})\.geojson")
+    pattern = re.compile(rf"{re.escape(stem)}_(\d{{3,}}){re.escape(suffix)}")
     indexed = sorted(
         (int(match.group(1)), path)
         for path in output_dir.iterdir()
@@ -394,15 +394,15 @@ def _legacy_outputs(output_dir: Path, stem: str) -> list[Path]:
     return contiguous
 
 
-def _load_output_state(output_dir: Path, stem: str) -> _OutputState:
+def _load_output_state(output_dir: Path, stem: str, suffix: str = ".geojson") -> _OutputState:
     """Load managed output, or discover contiguous output from pre-manifest releases."""
     manifest = output_dir / f".{stem}.geosplit.json"
     if not manifest.exists():
-        legacy = _legacy_outputs(output_dir, stem)
+        legacy = _legacy_outputs(output_dir, stem, suffix)
         return _OutputState(manifest, tuple(legacy), bool(legacy))
     try:
         names = json.loads(manifest.read_text(encoding="utf-8"))["files"]
-        pattern = re.compile(rf"{re.escape(stem)}_\d+\.geojson")
+        pattern = re.compile(rf"{re.escape(stem)}_\d+{re.escape(suffix)}")
         if not isinstance(names, list) or not all(isinstance(name, str) and pattern.fullmatch(name) for name in names):
             raise ValueError("invalid file list")
     except OSError:
@@ -431,7 +431,7 @@ def _journal(tx: Path, status: str, existing: list[Path], targets: list[Path]) -
     temporary.replace(tx / "journal.json")
 
 
-def _recover_transaction(output_dir: Path, stem: str) -> None:
+def _recover_transaction(output_dir: Path, stem: str, suffix: str = ".geojson") -> None:
     """Restore old output or discard a completed/interrupted transaction."""
     tx = _transaction_path(output_dir, stem)
     if not tx.exists():
@@ -447,7 +447,9 @@ def _recover_transaction(output_dir: Path, stem: str) -> None:
         if data.get("status") == "complete":
             shutil.rmtree(tx)
             return
-        pattern = re.compile(rf"(?:{re.escape(stem)}_\d+\.geojson|\.{re.escape(stem)}\.geosplit\.json)")
+        pattern = re.compile(
+            rf"(?:{re.escape(stem)}_\d+{re.escape(suffix)}|\.{re.escape(stem)}\.geosplit\.json)"
+        )
         existing, targets = data["existing"], data["targets"]
         if not all(isinstance(name, str) and pattern.fullmatch(name) for name in existing + targets):
             raise ValueError("invalid transaction paths")
@@ -472,16 +474,17 @@ def _build_plan(
     stem: str,
     summaries: list[_BatchSummary],
     *,
+    suffix: str = ".geojson",
     check_transaction: bool = True,
 ) -> SplitPlan:
     """Build names, conflicts, and warnings from already-computed batch summaries."""
     width = max(3, len(str(len(summaries))))
     files = tuple(
-        PlannedFile(destination / f"{stem}_{index:0{width}d}.geojson", count, size)
+        PlannedFile(destination / f"{stem}_{index:0{width}d}{suffix}", count, size)
         for index, (count, size) in enumerate(summaries, 1)
     )
     try:
-        output_state = _load_output_state(destination, stem)
+        output_state = _load_output_state(destination, stem, suffix)
     except OSError as error:
         raise _operation_error("inspect output directory", destination, error) from error
     paths = [item.path for item in files]
@@ -503,7 +506,7 @@ def _build_plan(
         destination,
         files,
         sum(item.feature_count for item in files),
-        sum(item.size for item in files),
+        sum(item.size for item in files) if all(item.size >= 0 for item in files) else -1,
         tuple(conflicts),
         tuple(warnings),
     )
@@ -526,9 +529,11 @@ def plan_split(
     return _build_plan(paths.source, paths.output_dir, paths.stem, summaries)
 
 
-def _commit_transaction(plan: SplitPlan, stem: str, force: bool, tx: Path) -> tuple[Path, ...]:
+def _commit_transaction(
+    plan: SplitPlan, stem: str, force: bool, tx: Path, suffix: str = ".geojson"
+) -> tuple[Path, ...]:
     """Atomically replace managed output using the prepared transaction."""
-    output_state = _load_output_state(plan.output_dir, stem)
+    output_state = _load_output_state(plan.output_dir, stem, suffix)
     paths = [item.path for item in plan.files]
     existing = sorted({path for path in [*paths, *output_state.files] if path.exists()})
     if not force and (
@@ -549,7 +554,7 @@ def _commit_transaction(plan: SplitPlan, stem: str, force: bool, tx: Path) -> tu
         _journal(tx, "complete", managed, targets)
     except OSError as error:
         try:
-            _recover_transaction(plan.output_dir, stem)
+            _recover_transaction(plan.output_dir, stem, suffix)
         except GeoSplitError as recovery_error:
             raise GeoSplitError(
                 f"{_operation_error('commit split files', plan.output_dir, error)}; {recovery_error}"

@@ -88,6 +88,17 @@ def test_validation_writes_nothing(tmp_path: Path) -> None:
     assert {path.relative_to(tmp_path) for path in tmp_path.rglob("*")} == before
 
 
+def test_validation_progress_callback(tmp_path: Path) -> None:
+    source = _write_collection(
+        tmp_path / "input.geojson",
+        [{"type": "Point", "coordinates": [1, 2]}, {"type": "Point", "coordinates": [3, 4]}],
+    )
+    seen: list[int] = []
+    report = validate_geojson(source, progress=seen.append)
+    assert report.valid
+    assert seen == [1, 2]
+
+
 @pytest.mark.parametrize(
     ("geometry", "message"),
     [

@@ -3,7 +3,7 @@
 from .core import GeoSplitError, SplitPlan, SplitResult, iter_batches, plan_split, split_geojson
 from .validation import ValidationReport, validate_geojson
 
-__version__ = "0.5.0"
+__version__ = "0.5.5"
 __all__ = [
     "GeoSplitError",
     "SplitPlan",
