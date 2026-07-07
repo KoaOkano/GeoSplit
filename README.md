@@ -1,4 +1,7 @@
 # GeoSplit
+[![PyPI version](https://img.shields.io/pypi/v/geosplit.svg)](https://pypi.org/project/geosplit/)
+[![Python versions](https://img.shields.io/pypi/pyversions/geosplit.svg)](https://pypi.org/project/geosplit/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 GeoSplit safely validates GeoJSON, splits a GeoJSON `FeatureCollection`, splits GeoPackage layers by feature count, and converts GeoJSON to and from GeoPackage.
 
