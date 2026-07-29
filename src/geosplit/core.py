@@ -22,7 +22,7 @@ ProgressCallback = Callable[[int, int], None]
 _GeometryValidator = Callable[[Any, int], None]
 _BatchSummary = tuple[int, int]
 _MAX_DEPTH = 100
-_SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*(B|KB|KIB|MB|MIB|GB|GIB)?$", re.I)
+_SIZE = re.compile(r"^(\d+(?:\.\d+)?)\s*(B|KB|KIB|MB|MIB|GB|GIB)?$", re.IGNORECASE)
 _UNITS = {
     "B": 1,
     "KB": 1_000,
@@ -444,7 +444,7 @@ def _recover_transaction(output_dir: Path, stem: str, suffix: str = ".geojson") 
             return
         data = json.loads(journal.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError("invalid transaction journal")
+            raise TypeError("invalid transaction journal")
         if data.get("status") == "complete":
             shutil.rmtree(tx)
             return

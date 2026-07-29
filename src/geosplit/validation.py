@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, cast
 
-from .core import GeoSplitError, _MAX_DEPTH, _is_number, _iter_features, _read_metadata
+from .core import _MAX_DEPTH, GeoSplitError, _is_number, _iter_features, _read_metadata
 
 _ItemValidator = Callable[[Any, int, str], None]
 ProgressCallback = Callable[[int], None]

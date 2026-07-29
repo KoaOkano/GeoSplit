@@ -2,11 +2,11 @@ import json
 from pathlib import Path
 
 import pytest
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from geosplit import validate_geojson
 from geosplit.core import GeoSplitError, _recover_transaction, split_geojson
-
 
 coordinates = st.tuples(
     st.floats(min_value=-180, max_value=180, allow_nan=False, allow_infinity=False),
@@ -59,8 +59,10 @@ def test_random_bytes_do_not_crash_validation(data: bytes, tmp_path: Path) -> No
     [
         b'{"type":"FeatureCollection","features":[{"type":"Feature"',
         b'{"type":"FeatureCollection","features":[]}\xff',
-        b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Point",'
-        b'"coordinates":[NaN,0]}}]}',
+        (
+            b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Point",'
+            b'"coordinates":[NaN,0]}}]}'
+        ),
     ],
 )
 def test_malformed_input_is_reported(content: bytes, tmp_path: Path) -> None:
