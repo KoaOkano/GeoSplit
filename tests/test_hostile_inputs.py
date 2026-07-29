@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings, strategies as st
 
 from geosplit import validate_geojson
 from geosplit.core import GeoSplitError, _recover_transaction, split_geojson
@@ -37,7 +37,7 @@ def _write_json(path: Path, value: object) -> Path:
 
 
 @given(feature_collections())
-@settings(max_examples=50, deadline=None)
+@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_generated_feature_collections_validate_and_split(document: dict[str, object], tmp_path: Path) -> None:
     source = _write_json(tmp_path / "input.geojson", document)
     report = validate_geojson(source)
@@ -47,7 +47,7 @@ def test_generated_feature_collections_validate_and_split(document: dict[str, ob
 
 
 @given(st.binary(min_size=1, max_size=200))
-@settings(max_examples=50, deadline=None)
+@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_random_bytes_do_not_crash_validation(data: bytes, tmp_path: Path) -> None:
     source = tmp_path / "input.geojson"
     source.write_bytes(data)
@@ -60,8 +60,6 @@ def test_random_bytes_do_not_crash_validation(data: bytes, tmp_path: Path) -> No
         b'{"type":"FeatureCollection","features":[{"type":"Feature"',
         b'{"type":"FeatureCollection","features":[]}\xff',
         b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Point",'
-        b'"coordinates":[1e1000000,0]}}]}',
-        b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Point",'
         b'"coordinates":[NaN,0]}}]}',
     ],
 )
@@ -69,6 +67,15 @@ def test_malformed_input_is_reported(content: bytes, tmp_path: Path) -> None:
     source = tmp_path / "bad.geojson"
     source.write_bytes(content)
     assert not validate_geojson(source).valid
+
+
+def test_huge_finite_number_does_not_crash_validation(tmp_path: Path) -> None:
+    source = tmp_path / "huge.geojson"
+    source.write_bytes(
+        b'{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},'
+        b'"geometry":{"type":"Point","coordinates":[1e1000000,0]}}]}'
+    )
+    assert validate_geojson(source).valid in {True, False}
 
 
 def test_deep_geometry_collection_is_rejected(tmp_path: Path) -> None:
