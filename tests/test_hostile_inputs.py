@@ -36,8 +36,8 @@ def _write_json(path: Path, value: object) -> Path:
     return path
 
 
-@given(feature_collections())
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(document=feature_collections())
 def test_generated_feature_collections_validate_and_split(document: dict[str, object], tmp_path: Path) -> None:
     source = _write_json(tmp_path / "input.geojson", document)
     report = validate_geojson(source)
@@ -46,8 +46,8 @@ def test_generated_feature_collections_validate_and_split(document: dict[str, ob
     assert sum(len(path.read_text(encoding="utf-8")) for path in outputs) > 0
 
 
-@given(st.binary(min_size=1, max_size=200))
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(data=st.binary(min_size=1, max_size=200))
 def test_random_bytes_do_not_crash_validation(data: bytes, tmp_path: Path) -> None:
     source = tmp_path / "input.geojson"
     source.write_bytes(data)
