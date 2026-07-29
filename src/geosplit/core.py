@@ -227,7 +227,8 @@ _COORDINATE_VALIDATORS: dict[str, Callable[[Any], bool]] = {
 }
 
 
-def _validate_geometry(geometry: Any, index: int, allow_null: bool = True) -> None:
+def _validate_geometry(geometry: Any, index: int, allow_null: bool = True, depth: int = 1) -> None:
+    _check_depth(depth)
     if geometry is None and allow_null:
         return
     if not isinstance(geometry, dict):
@@ -239,7 +240,7 @@ def _validate_geometry(geometry: Any, index: int, allow_null: bool = True) -> No
         if not isinstance(geometries, list):
             raise GeoSplitError(f"Feature {index} has invalid geometry.")
         for child in geometries:
-            _validate_geometry(child, index, allow_null=False)
+            _validate_geometry(child, index, allow_null=False, depth=depth + 1)
     elif geometry_type in _COORDINATE_VALIDATORS and coordinates == []:
         return
     elif geometry_type not in _COORDINATE_VALIDATORS or not _COORDINATE_VALIDATORS[geometry_type](coordinates):

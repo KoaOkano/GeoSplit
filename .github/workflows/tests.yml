@@ -22,4 +22,5 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev,gpkg]"
       - run: pytest
+      - run: python benchmarks/geojson_benchmark.py --features 200 --operation all --json
       - run: ruff check .

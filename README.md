@@ -208,6 +208,16 @@ print(report.errors)
 - Invalid geometry structure, non-finite coordinates, corrupt JSON, and excessive nesting are rejected.
 - A disk-space estimate is checked before staging; operating-system write errors are still handled if free space changes later.
 
+## Performance checks
+
+GeoSplit includes a small benchmark runner for development and CI:
+
+```bash
+python benchmarks/geojson_benchmark.py --features 2000 --operation all --json
+```
+
+See [docs/performance.md](docs/performance.md) for the benchmark policy, baseline guidance, and large-run recommendations.
+
 ## Update
 
 ```bash

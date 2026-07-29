@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, cast
 
-from .core import GeoSplitError, _is_number, _iter_features, _read_metadata
+from .core import GeoSplitError, _MAX_DEPTH, _is_number, _iter_features, _read_metadata
 
 _ItemValidator = Callable[[Any, int, str], None]
 ProgressCallback = Callable[[int], None]
@@ -106,7 +106,11 @@ _COORDINATE_VALIDATORS: dict[str, _ItemValidator] = {
 }
 
 
-def _validate_geometry(geometry: Any, feature: int, path: str = "geometry", *, allow_null: bool = True) -> None:
+def _validate_geometry(
+    geometry: Any, feature: int, path: str = "geometry", *, allow_null: bool = True, depth: int = 1
+) -> None:
+    if depth > _MAX_DEPTH:
+        _error(feature, path, f"geometry nesting exceeds the {_MAX_DEPTH}-level safety limit.")
     if geometry is None and allow_null:
         return
     if not isinstance(geometry, dict):
@@ -116,7 +120,7 @@ def _validate_geometry(geometry: Any, feature: int, path: str = "geometry", *, a
     if geometry_type == "GeometryCollection":
         geometries = _require_array(geometry.get("geometries"), feature, f"{path}.geometries")
         for index, child in enumerate(geometries):
-            _validate_geometry(child, feature, f"{path}.geometries[{index}]", allow_null=False)
+            _validate_geometry(child, feature, f"{path}.geometries[{index}]", allow_null=False, depth=depth + 1)
         return
 
     coordinates = geometry.get("coordinates")

@@ -1,11 +1,31 @@
 # Changelog
 
+## 0.6.0 - 2026-07-29
+
+### Added
+
+- Add a stdlib benchmark runner for split-count, split-size, and validation workflows.
+- Measure processing time, peak Python memory, peak observed output-directory disk usage, output bytes, and output file count.
+- Run a small benchmark in regular Windows and Linux CI.
+- Add Hypothesis-based hostile-input coverage for generated geometries, malformed bytes, malformed JSON, huge numbers, non-finite values, deep GeometryCollections, malicious manifests, and malicious transaction journals.
+- Document the performance policy, baseline expectations, and manual large-run guidance.
+
+### Changed
+
+- Reject deeply nested GeometryCollections with the same nesting safety limit used for GeoJSON parsing.
+- Add Hypothesis as a development dependency only.
+
+### Compatibility
+
+- Preserve runtime dependencies and existing CLI/Python APIs.
+- Keep multi-gigabyte benchmarks manual or scheduled rather than running them on every CI job.
+
 ## 0.5.5 - 2026-07-07
 
 ### Added
 
 - Add interactive progress display for split, validate, and convert commands.
-- Add `--dryrun` as an alias for the existing `--dry-run` split option. ;D
+- Add `--dryrun` as an alias for the existing `--dry-run` split option.
 - Add GeoPackage input support to `geosplit split` with feature-count splitting.
 - Keep the same GeoPackage layer name in every split output file.
 
