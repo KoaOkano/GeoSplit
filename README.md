@@ -1,5 +1,5 @@
 # GeoSplit
-[![PyPI version](https://img.shields.io/pypi/v/geosplit.svg)](https://pypi.org/project/geosplit/)
+[![PyPI version](https://img.shields.io/badge/pypi-0.7.0-blue.svg)](https://pypi.org/project/geosplit/)
 [![Python versions](https://img.shields.io/pypi/pyversions/geosplit.svg)](https://pypi.org/project/geosplit/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -161,6 +161,8 @@ geosplit convert roads.geojson roads.gpkg --force
 If a GeoPackage contains exactly one layer, `--layer` is optional.
 
 ## Python API
+
+The supported Python API is documented in [docs/api.md](docs/api.md).
 
 Stream validated collections without writing files:
 

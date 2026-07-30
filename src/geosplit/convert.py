@@ -27,6 +27,7 @@ from .core import (
 _GEOJSON = {".geojson", ".json"}
 _GPKG = ".gpkg"
 ProgressReporter = Callable[[str, int, int | None], None]
+__all__ = ["convert_file", "plan_geopackage_split", "split_geopackage"]
 
 
 def _geopandas() -> Any:

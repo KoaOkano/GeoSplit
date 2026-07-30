@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.0 - 2026-07-30
+
+### Added
+
+- Document the supported Python API, result objects, exceptions, and GeoPackage helpers.
+- Add contract tests for the documented imports.
+
+### Changed
+
+- Export `parse_size` from the top-level `geosplit` package.
+- Declare the supported conversion helpers in `geosplit.convert`.
+
+### Compatibility
+
+- Preserve existing function signatures, return types, CLI behavior, and file output.
+- Treat undocumented modules and names beginning with an underscore as internal.
+
 ## 0.6.0 - 2026-07-29
 
 ### Added
